@@ -7,10 +7,21 @@ import connectDB from "../config/database";
 let isConnected = false;
 
 export default async function handler(req: any, res: any) {
-  if (!isConnected) {
-    await connectDB();
-    isConnected = true;
-  }
+  try {
+    const isHealthCheck = req?.url?.startsWith("/health") ?? false;
 
-  return app(req, res);
+    if (!isConnected && !isHealthCheck) {
+      await connectDB();
+      isConnected = true;
+    }
+
+    return app(req, res);
+  } catch (error) {
+    console.error("API handler failed:", error);
+
+    return res.status(503).json({
+      success: false,
+      message: "Database unavailable. Please try again shortly.",
+    });
+  }
 }
