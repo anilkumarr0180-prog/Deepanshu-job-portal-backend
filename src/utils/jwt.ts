@@ -37,8 +37,15 @@ export const generateAccessToken = (
 export const verifyAccessToken = (
   token: string
 ): AccessTokenPayload => {
-  return jwt.verify(
-    token,
-    env.JWT_SECRET
-  ) as AccessTokenPayload;
+  console.log("[JWT DEBUG] verifying token:", token);
+  console.log(
+    "[JWT DEBUG] using secret:",
+    env.JWT_SECRET.slice(0, 5) + "..."
+  );
+
+  const decoded = jwt.verify(token, env.JWT_SECRET) as AccessTokenPayload;
+
+  console.log("[JWT DEBUG] token decoded:", decoded);
+
+  return decoded;
 };

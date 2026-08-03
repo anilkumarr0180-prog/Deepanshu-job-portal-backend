@@ -7,14 +7,17 @@ import { USER_ROLES } from "../constants/roles";
 
 const router = Router();
 
-// Debug: log when admin routes file is loaded
-console.log("admin.routes loaded");
 /*
 |--------------------------------------------------------------------------
 | Admin Dashboard
 |--------------------------------------------------------------------------
 */
 
-router.get( "/dashboard",getAdminDashboard);
+router.get(
+  "/dashboard",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  getAdminDashboard
+);
 
 export default router;

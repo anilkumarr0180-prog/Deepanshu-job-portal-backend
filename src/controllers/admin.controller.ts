@@ -12,13 +12,11 @@ export const getAdminDashboard = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  // const dashboard = await adminService.getDashboardStats();
-
-    console.log("Admin dashboard fetched successfully:");
+  const dashboard = await adminService.getDashboardStats();
 
   res.status(HTTP_STATUS.OK).json({
     success: true,
     message: "Admin dashboard fetched successfully.",
-    // data: dashboard,
+    data: dashboard,
   });
 };

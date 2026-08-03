@@ -12,7 +12,9 @@ import { USER_ROLES } from "../constants/roles";
 | POST /api/auth/register
 |--------------------------------------------------------------------------
 */
+
 export const registerSchema = z.object({
+  
   body: z.object({
     name: z
       .string()
@@ -31,10 +33,7 @@ export const registerSchema = z.object({
       .max(100, "Password cannot exceed 100 characters."),
 
     role: z
-      .enum([
-        USER_ROLES.CANDIDATE,
-        USER_ROLES.RECRUITER,
-      ])
+      .enum(["candidate", "recruiter", "admin"])
       .optional(),
 
     phone: z
