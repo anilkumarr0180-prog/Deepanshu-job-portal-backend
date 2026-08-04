@@ -10,12 +10,26 @@ export const getDashboardStats = async () => {
     totalCandidates,
     totalJobs,
     totalApplications,
+    recentUsers,
+    recentJobs,
   ] = await Promise.all([
     User.countDocuments(),
     User.countDocuments({ role: USER_ROLES.RECRUITER }),
     User.countDocuments({ role: USER_ROLES.CANDIDATE }),
     Job.countDocuments(),
     Application.countDocuments(),
+    User.find()
+      .sort({
+        createdAt: -1,
+      })
+      .limit(5)
+      .select("-password"),
+    Job.find()
+      .sort({
+        createdAt: -1,
+      })
+      .limit(5)
+      .populate("recruiterId", "name email"),
   ]);
 
   return {
@@ -24,5 +38,7 @@ export const getDashboardStats = async () => {
     totalCandidates,
     totalJobs,
     totalApplications,
+    recentUsers,
+    recentJobs,
   };
 };
