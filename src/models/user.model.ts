@@ -6,8 +6,11 @@ export interface IUser extends Document {
   email: string;
   password: string;
   role: UserRole;
+  /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile/RecruiterProfile */
   phone?: string;
+  /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile/RecruiterProfile */
   profilePicture?: string;
+  /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile */
   resumeUrl?: string;
   isBlocked: boolean;
   createdAt: Date;
@@ -42,6 +45,7 @@ const userSchema = new Schema<IUser>(
       default: USER_ROLES.CANDIDATE,
     },
 
+    /* Legacy Profile Fields - Retained for backward compatibility */
     phone: {
       type: String,
       trim: true,

@@ -1,6 +1,7 @@
 import Application from "../models/application.model";
 import Job from "../models/job.model";
 import User from "../models/user.model";
+import CandidateProfile from "../models/candidate-profile.model";
 
 import { AppError } from "../utils/app-error";
 
@@ -122,10 +123,18 @@ export const applyForJob = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Resume Check                                                                */
+  /* Resume Check (CandidateProfile Source of Truth with User Fallback)           */
   /* -------------------------------------------------------------------------- */
 
-  if (!candidate.resumeUrl) {
+  const candidateProfile = await CandidateProfile.findOne({
+    userId: applicantId,
+  })
+    .select("resumeUrl")
+    .lean();
+
+  const activeResumeUrl = candidateProfile?.resumeUrl || candidate.resumeUrl;
+
+  if (!activeResumeUrl) {
     throw new AppError(
       "Please upload your resume before applying.",
       HTTP_STATUS.BAD_REQUEST
@@ -155,7 +164,7 @@ export const applyForJob = async (
   const application = await Application.create({
     jobId,
     applicantId,
-    resume: candidate.resumeUrl,
+    resume: activeResumeUrl,
     coverLetter: applicationData.coverLetter,
     status: APPLICATION_STATUS.APPLIED,
   });
