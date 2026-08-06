@@ -7,6 +7,8 @@ import applicationRoutes from "./routes/application.routes";
 import profileRoutes from "./routes/profile.routes";
 import dashboardRoutes from "./routes/dashboard.route";
 import adminRoutes from "./routes/admin.routes";
+import companyRoutes from "./routes/company.routes";
+import savedJobRoutes from "./routes/saved-job.routes";
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -75,10 +77,13 @@ app.get("/health", (_req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.use((req, _res, next) => {
-  console.log(`${req.method} ${req.originalUrl}`);
-  next();
-});
+if (process.env.NODE_ENV === "development") {
+  app.use((req, _res, next) => {
+    console.log(`${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
+
 
 /*
 |--------------------------------------------------------------------------
@@ -97,6 +102,12 @@ app.use("/api", profileRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
 app.use("/api/admin", adminRoutes);
+
+app.use("/api/company", companyRoutes);
+
+app.use("/api/saved-jobs", savedJobRoutes);
+
+
 
 /*
 |--------------------------------------------------------------------------

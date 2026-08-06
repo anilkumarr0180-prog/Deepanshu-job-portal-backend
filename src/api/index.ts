@@ -1,12 +1,13 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import { Request, Response } from "express";
 import app from "../app";
 import connectDB from "../config/database";
 
 let isConnected = false;
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: Request, res: Response) {
   try {
     const isHealthCheck = req?.url?.startsWith("/health") ?? false;
 

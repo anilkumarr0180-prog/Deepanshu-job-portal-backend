@@ -1,139 +1,115 @@
 import { Router } from "express";
-
 import {
-  createJob,
-  getJobs,
-  getMyJobs,
-  getJobById,
-  updateJob,
-  deleteJob,
-} from "../controllers/job.controller";
+  createCompany,
+  getMyCompany,
+  updateMyCompany,
+  getCompanyById,
+  getCompanies,
+  deleteCompany,
+} from "../controllers/company.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
 import { validate } from "../middleware/validation.middleware";
-
-import {
-  createJobSchema,
-  updateJobSchema,
-  getJobsQuerySchema,
-  jobIdParamSchema,
-} from "../validations/job.validations";
-
 import { USER_ROLES } from "../constants/roles";
+import {
+  createCompanySchema,
+  updateCompanySchema,
+  getCompaniesQuerySchema,
+  companyIdParamSchema,
+} from "../validations/company.validations";
 
 const router = Router();
 
 /*
 |--------------------------------------------------------------------------
-| Get All Jobs
+| Create Company Profile
 |--------------------------------------------------------------------------
-| Route:
-| GET /api/jobs
-|
-| Access:
-| Public
-|--------------------------------------------------------------------------
-*/
-router.get("/", validate(getJobsQuerySchema), getJobs);
-
-/*
-|--------------------------------------------------------------------------
-| Get My Jobs
-|--------------------------------------------------------------------------
-| Route:
-| GET /api/jobs/my-jobs
-|
-| Access:
-| Recruiter only
-|--------------------------------------------------------------------------
-*/
-router.get(
-  "/my-jobs",
-  authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
-  getMyJobs
-);
-
-/*
-|--------------------------------------------------------------------------
-| Get Job By Id
-|--------------------------------------------------------------------------
-| Route:
-| GET /api/jobs/:id
-|
-| Access:
-| Public
-|--------------------------------------------------------------------------
-*/
-router.get("/:id", validate(jobIdParamSchema), getJobById);
-
-/*
-|--------------------------------------------------------------------------
-| Create Job
-|--------------------------------------------------------------------------
-| Route:
-| POST /api/jobs
-|
-| Access:
-| Recruiter only
+| Route: POST /api/company
+| Access: Recruiter Only
 |--------------------------------------------------------------------------
 */
 router.post(
   "/",
   authMiddleware,
   authorize(USER_ROLES.RECRUITER),
-  validate(createJobSchema),
-  createJob
+  validate(createCompanySchema),
+  createCompany
 );
 
 /*
 |--------------------------------------------------------------------------
-| Update Job
+| Get Logged-In Recruiter's Company Profile
 |--------------------------------------------------------------------------
-| Route:
-| PUT /api/jobs/:id
-|
-| Access:
-| Recruiter only
-|
-| Rules:
-| - User must be authenticated
-| - User must be recruiter
-| - User can update only their own jobs
+| Route: GET /api/company/me
+| Access: Recruiter Only
+|--------------------------------------------------------------------------
+*/
+router.get(
+  "/me",
+  authMiddleware,
+  authorize(USER_ROLES.RECRUITER),
+  getMyCompany
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update Logged-In Recruiter's Company Profile
+|--------------------------------------------------------------------------
+| Route: PUT /api/company/me
+| Access: Recruiter Only
 |--------------------------------------------------------------------------
 */
 router.put(
-  "/:id",
+  "/me",
   authMiddleware,
   authorize(USER_ROLES.RECRUITER),
-  validate(jobIdParamSchema),
-  validate(updateJobSchema),
-  updateJob
+  validate(updateCompanySchema),
+  updateMyCompany
 );
 
 /*
 |--------------------------------------------------------------------------
-| Delete Job
+| Get All Companies (Public / Admin)
 |--------------------------------------------------------------------------
-| Route:
-| DELETE /api/jobs/:id
-|
-| Access:
-| Recruiter only
-|
-| Rules:
-| - User must be authenticated
-| - User must be recruiter
-| - User can delete only their own jobs
+| Route: GET /api/company
+| Access: Public
+|--------------------------------------------------------------------------
+*/
+router.get(
+  "/",
+  validate(getCompaniesQuerySchema),
+  getCompanies
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Company By ID (Public)
+|--------------------------------------------------------------------------
+| Route: GET /api/company/:id
+| Access: Public
+|--------------------------------------------------------------------------
+*/
+router.get(
+  "/:id",
+  validate(companyIdParamSchema),
+  getCompanyById
+);
+
+/*
+|--------------------------------------------------------------------------
+| Delete Company Profile
+|--------------------------------------------------------------------------
+| Route: DELETE /api/company/:id
+| Access: Admin Only
 |--------------------------------------------------------------------------
 */
 router.delete(
   "/:id",
   authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
-  validate(jobIdParamSchema),
-  deleteJob
+  authorize(USER_ROLES.ADMIN),
+  validate(companyIdParamSchema),
+  deleteCompany
 );
 
 export default router;

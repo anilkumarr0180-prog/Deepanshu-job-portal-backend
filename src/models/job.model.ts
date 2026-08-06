@@ -98,6 +98,7 @@ const jobSchema = new Schema<IJob>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
     },
   },
   {
@@ -105,6 +106,10 @@ const jobSchema = new Schema<IJob>(
   }
 );
 
+jobSchema.index({ status: 1 });
+jobSchema.index({ status: 1, createdAt: -1 });
+jobSchema.index({ title: "text", company: "text", description: "text" });
+
 const Job = model<IJob>("Job", jobSchema);
 
-export default Job;
+export default Job;

@@ -14,7 +14,6 @@ import { USER_ROLES } from "../constants/roles";
 */
 
 export const registerSchema = z.object({
-  
   body: z.object({
     name: z
       .string()
@@ -25,15 +24,20 @@ export const registerSchema = z.object({
     email: z
       .string()
       .trim()
+      .toLowerCase()
       .email("Please provide a valid email address."),
 
     password: z
       .string()
       .min(8, "Password must be at least 8 characters.")
-      .max(100, "Password cannot exceed 100 characters."),
+      .max(100, "Password cannot exceed 100 characters.")
+      .regex(
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$/,
+        "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character."
+      ),
 
     role: z
-      .enum(["candidate", "recruiter", "admin"])
+      .enum([USER_ROLES.CANDIDATE, USER_ROLES.RECRUITER])
       .optional(),
 
     phone: z
@@ -61,6 +65,7 @@ export const loginSchema = z.object({
     email: z
       .string()
       .trim()
+      .toLowerCase()
       .email("Please provide a valid email address."),
 
     password: z

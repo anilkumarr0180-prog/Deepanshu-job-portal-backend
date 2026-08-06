@@ -67,6 +67,10 @@ const userSchema = new Schema<IUser>(
   }
 );
 
+userSchema.index({ role: 1 });
+userSchema.index({ isBlocked: 1 });
+userSchema.index({ role: 1, isBlocked: 1 });
+
 const User = model<IUser>("User", userSchema);
 
-export default User;
+export default User;

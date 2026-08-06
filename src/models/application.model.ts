@@ -29,55 +29,27 @@ const applicationSchema = new Schema<IApplication>(
       type: Schema.Types.ObjectId,
       ref: "Job",
       required: true,
+      index: true,
     },
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Applicant Reference
-    |--------------------------------------------------------------------------
-    | Candidate who applied for the job.
-    |--------------------------------------------------------------------------
-    */
     applicantId: {
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
     },
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Resume
-    |--------------------------------------------------------------------------
-    | Required because candidate must have resume before applying.
-    |--------------------------------------------------------------------------
-    */
     resume: {
       type: String,
       required: true,
       trim: true,
     },
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Cover Letter
-    |--------------------------------------------------------------------------
-    */
     coverLetter: {
       type: String,
       trim: true,
     },
 
-
-    /*
-    |--------------------------------------------------------------------------
-    | Application Status
-    |--------------------------------------------------------------------------
-    | Default status when candidate applies.
-    |--------------------------------------------------------------------------
-    */
     status: {
       type: String,
       enum: Object.values(APPLICATION_STATUS),
@@ -89,16 +61,6 @@ const applicationSchema = new Schema<IApplication>(
   }
 );
 
-
-/*
-|--------------------------------------------------------------------------
-| Prevent Duplicate Applications
-|--------------------------------------------------------------------------
-| A candidate cannot apply for the same job twice.
-|
-| Database-level protection.
-|--------------------------------------------------------------------------
-*/
 applicationSchema.index(
   {
     jobId: 1,
@@ -109,11 +71,11 @@ applicationSchema.index(
   }
 );
 
+applicationSchema.index({ applicantId: 1, createdAt: -1 });
 
 const Application = model<IApplication>(
   "Application",
   applicationSchema
 );
 
-
-export default Application;
+export default Application;
