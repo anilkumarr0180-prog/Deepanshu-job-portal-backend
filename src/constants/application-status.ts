@@ -1,5 +1,6 @@
 export const APPLICATION_STATUS = {
   APPLIED: "Applied",
+  UNDER_REVIEW: "Under Review",
   SHORTLISTED: "Shortlisted",
   INTERVIEW: "Interview",
   REJECTED: "Rejected",

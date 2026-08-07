@@ -1,26 +1,56 @@
 import { NextFunction, Request, Response } from "express";
-import { ZodError, ZodType } from "zod";
-export const validate =
-  (schema: ZodType) =>
-  (req: Request, res: Response, next: NextFunction): void => {
-    const result = schema.safeParse({
-      body: req.body,
-      params: req.params,
-      query: req.query,
-    });
+import { ZodError, ZodTypeAny } from "zod";
 
-    if (!result.success) {
-      res.status(400).json({
-        success: false,
-        message: "Validation failed.",
-        errors: result.error.issues.map((issue) => ({
-          field: issue.path.join("."),
-          message: issue.message,
-        })),
+const setRequestProperty = (
+  req: Request,
+  key: "body" | "query" | "params",
+  value: any
+) => {
+  try {
+    req[key] = value;
+  } catch {
+    Object.defineProperty(req, key, {
+      value,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+};
+
+export const validate =
+  (schema: ZodTypeAny) =>
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await schema.parseAsync({
+        body: req.body,
+        params: req.params,
+        query: req.query,
       });
 
-      return;
-    }
+      if (result) {
+        const parsed = result as { body?: any; query?: any; params?: any };
+        if (parsed.body !== undefined) setRequestProperty(req, "body", parsed.body);
+        if (parsed.query !== undefined) setRequestProperty(req, "query", parsed.query);
+        if (parsed.params !== undefined) setRequestProperty(req, "params", parsed.params);
+      }
 
-    next();
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          success: false,
+          message: "Validation failed.",
+          errors: error.issues.map((issue) => ({
+            field: issue.path.join(".").replace(/^(body|query|params)\./, ""),
+            message: issue.message,
+          })),
+        });
+        return;
+      }
+
+      next(error);
+    }
   };
+
+

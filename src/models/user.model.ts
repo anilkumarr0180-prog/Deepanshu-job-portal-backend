@@ -4,8 +4,11 @@ import { USER_ROLES, UserRole } from "../constants/roles";
 export interface IUser extends Document {
   name: string;
   email: string;
-  password: string;
+  password?: string;
   role: UserRole;
+  authProvider: 'local' | 'google';
+  googleId?: string;
+  isEmailVerified: boolean;
   /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile/RecruiterProfile */
   phone?: string;
   /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile/RecruiterProfile */
@@ -36,7 +39,9 @@ const userSchema = new Schema<IUser>(
 
     password: {
       type: String,
-      required: true,
+      required: function (this: IUser) {
+        return this.authProvider === 'local';
+      },
       select: false,
     },
 
@@ -44,6 +49,23 @@ const userSchema = new Schema<IUser>(
       type: String,
       enum: Object.values(USER_ROLES),
       default: USER_ROLES.CANDIDATE,
+    },
+
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
+
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
     },
 
     /* Legacy Profile Fields - Retained for backward compatibility */

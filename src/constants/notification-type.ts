@@ -1,0 +1,9 @@
+export const NOTIFICATION_TYPES = {
+  JOB_ALERT: "JOB_ALERT",
+  APPLICATION_UPDATE: "APPLICATION_UPDATE",
+  NEW_MESSAGE: "NEW_MESSAGE",
+  SYSTEM_ALERT: "SYSTEM_ALERT",
+} as const;
+
+export type NotificationType =
+  typeof NOTIFICATION_TYPES[keyof typeof NOTIFICATION_TYPES];

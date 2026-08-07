@@ -9,6 +9,9 @@ import dashboardRoutes from "./routes/dashboard.route";
 import adminRoutes from "./routes/admin.routes";
 import companyRoutes from "./routes/company.routes";
 import savedJobRoutes from "./routes/saved-job.routes";
+import notificationRoutes from "./routes/notification.routes";
+import chatRoutes from "./routes/chat.routes";
+
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -124,6 +127,12 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/company", companyRoutes);
 
 app.use("/api/saved-jobs", savedJobRoutes);
+
+app.use("/api/notifications", notificationRoutes);
+
+app.use("/api/chat", chatRoutes);
+app.use("/api/v1/chat", chatRoutes);
+
 
 
 

@@ -97,7 +97,7 @@ export const createCompany = async (
     country: companyData.country,
     socialLinks: companyData.socialLinks,
     recruiterId,
-    isVerified: false,
+    isVerified: true,
   });
 
   return company;
@@ -109,6 +109,13 @@ export const createCompany = async (
 |--------------------------------------------------------------------------
 */
 export const getMyCompany = async (recruiterId: string) => {
+  const existing = await Company.findOne({ recruiterId });
+
+  if (existing && !existing.isVerified) {
+    existing.isVerified = true;
+    await existing.save();
+  }
+
   const company = await Company.findOne({ recruiterId })
     .populate("recruiterId", "name email phone")
     .lean();

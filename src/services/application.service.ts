@@ -2,6 +2,10 @@ import Application from "../models/application.model";
 import Job from "../models/job.model";
 import User from "../models/user.model";
 import CandidateProfile from "../models/candidate-profile.model";
+import {
+  sendJobApplicationApplicantEmail,
+  sendJobApplicationRecruiterEmail,
+} from "./email.service";
 
 import { AppError } from "../utils/app-error";
 
@@ -11,6 +15,8 @@ import {
   ApplicationStatus,
 } from "../constants/application-status";
 import { JOB_STATUS } from "../constants/job-status";
+import { createNotification } from "./notification.service";
+import { NOTIFICATION_TYPES } from "../constants/notification-type";
 
 
 import {
@@ -78,11 +84,19 @@ export const applyForJob = async (
   /* -------------------------------------------------------------------------- */
   /* Check Company Verification                                                  */
   /* -------------------------------------------------------------------------- */
+  /* Check Company Verification                                                  */
+  /* -------------------------------------------------------------------------- */
 
   const Company = (await import("../models/company.model")).default;
-  const company = await Company.findOne({ recruiterId: job.recruiterId });
+  let company = null;
+  if (job.companyId) {
+    company = await Company.findById(job.companyId);
+  }
+  if (!company && job.recruiterId) {
+    company = await Company.findOne({ recruiterId: job.recruiterId });
+  }
 
-  if (!company || !company.isVerified) {
+  if (company && company.isVerified === false) {
     throw new AppError(
       "This company is not accepting applications.",
       HTTP_STATUS.FORBIDDEN
@@ -100,12 +114,13 @@ export const applyForJob = async (
     );
   }
 
-  /* -------------------------------------------------------------------------- */
-  /* Check Candidate Exists & Is Not Blocked                                    */
-  /* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/* Check Candidate Exists & Is Not Blocked                                    */
+/* -------------------------------------------------------------------------- */
 
   const candidate = await User.findById(applicantId).select(
-    "resumeUrl isBlocked"
+    "name email resumeUrl isBlocked"
   );
 
   if (!candidate) {
@@ -164,10 +179,106 @@ export const applyForJob = async (
   const application = await Application.create({
     jobId,
     applicantId,
+    candidateProfileId: candidateProfile?._id,
     resume: activeResumeUrl,
     coverLetter: applicationData.coverLetter,
     status: APPLICATION_STATUS.APPLIED,
   });
+
+  await application.populate({
+    path: "jobId",
+    select: "title company location salaryMin salaryMax employmentType experienceLevel status skills",
+  });
+
+  try {
+    const companyName = company?.name || job.company || "JobsBox Partner";
+
+    // Candidate real-time notification
+    await createNotification({
+      recipientId: applicantId,
+      senderId: job.recruiterId?.toString() || null,
+      type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+      title: "Application Submitted Successfully 🎉",
+      body: `You have successfully applied for "${job.title}" at ${companyName}.`,
+      link: `/candidate/applied`,
+      metadata: {
+        jobId: job._id.toString(),
+        applicationId: application._id.toString(),
+      },
+    });
+
+    // Recruiter real-time notification
+    if (job.recruiterId) {
+      await createNotification({
+        recipientId: job.recruiterId.toString(),
+        senderId: applicantId,
+        type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+        title: "New Job Application Received",
+        body: `A new candidate submitted an application for "${job.title}".`,
+        link: `/recruiter/applicants`,
+        metadata: {
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+        },
+      });
+    }
+  } catch (err) {
+    console.error("Failed to send real-time notification on job application:", err);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Dispatch SMTP Email Notifications                                           */
+  /* -------------------------------------------------------------------------- */
+
+  try {
+    const companyName = company?.name || job.company || "JobsBox Partner";
+    
+    // Fetch recruiter user details
+    const recruiterUser = await User.findById(job.recruiterId).select("name email").lean();
+
+    // Dispatch emails concurrently
+    const emailPromises: Promise<any>[] = [];
+
+    if (candidate.email) {
+      emailPromises.push(
+        sendJobApplicationApplicantEmail({
+          applicantName: candidate.name || "Candidate",
+          applicantEmail: candidate.email,
+          jobTitle: job.title,
+          companyName,
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+        })
+      );
+    } else {
+      console.warn(`[SMTP WARN] Candidate (ID: ${applicantId}) does not have an email address attached in DB.`);
+    }
+
+    if (recruiterUser?.email) {
+      emailPromises.push(
+        sendJobApplicationRecruiterEmail({
+          recruiterName: recruiterUser.name || "Recruiter",
+          recruiterEmail: recruiterUser.email,
+          applicantName: candidate.name || "Candidate",
+          applicantEmail: candidate.email || "",
+          jobTitle: job.title,
+          companyName,
+          coverLetter: applicationData.coverLetter,
+          resumeUrl: activeResumeUrl,
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+        })
+      );
+    } else {
+      console.warn(`[SMTP WARN] Recruiter (ID: ${job.recruiterId}) does not have an email address attached in DB.`);
+    }
+
+    await Promise.allSettled(emailPromises);
+  } catch (err) {
+    console.error("Failed to dispatch application emails via SMTP:", err);
+  }
+
+
 
   return application;
 };
@@ -210,7 +321,11 @@ export const getMyApplications = async (
       Application.countDocuments(query),
     ]);
 
-    return buildPaginatedResult(applications, totalItems, page, limit);
+    const validApplications = applications.filter(
+      (app) => app.jobId !== null && app.jobId !== undefined
+    );
+
+    return buildPaginatedResult(validApplications, totalItems, page, limit);
   }
 
   const applications = await Application.find(query)
@@ -222,7 +337,11 @@ export const getMyApplications = async (
     .sort(sortOptions)
     .lean();
 
-  return applications;
+  const validApplications = applications.filter(
+    (app) => app.jobId !== null && app.jobId !== undefined
+  );
+
+  return validApplications;
 };
 
 /*
@@ -362,43 +481,33 @@ export const updateApplicationStatus = async (
 
   /*
   |--------------------------------------------------------------------------
-  | Status Transition Checks
+  | Status Transition Checks & Normalization
   |--------------------------------------------------------------------------
   */
+
+  const normalizedStatusMap: Record<string, string> = {
+    applied: APPLICATION_STATUS.APPLIED,
+    "under review": APPLICATION_STATUS.UNDER_REVIEW,
+    under_review: APPLICATION_STATUS.UNDER_REVIEW,
+    shortlisted: APPLICATION_STATUS.SHORTLISTED,
+    interview: APPLICATION_STATUS.INTERVIEW,
+    rejected: APPLICATION_STATUS.REJECTED,
+    hired: APPLICATION_STATUS.HIRED,
+  };
+
+  const targetStatus =
+    normalizedStatusMap[status.toLowerCase()] || status;
 
   if (
     application.status === APPLICATION_STATUS.HIRED ||
     application.status === APPLICATION_STATUS.REJECTED
   ) {
+    if (application.status === targetStatus) {
+      return application;
+    }
     throw new AppError(
       "Cannot change status of a finalized application.",
       HTTP_STATUS.CONFLICT
-    );
-  }
-
-  const validTransitions: Record<string, string[]> = {
-    [APPLICATION_STATUS.APPLIED]: [
-      APPLICATION_STATUS.SHORTLISTED,
-      APPLICATION_STATUS.INTERVIEW,
-      APPLICATION_STATUS.REJECTED,
-      APPLICATION_STATUS.HIRED,
-    ],
-    [APPLICATION_STATUS.SHORTLISTED]: [
-      APPLICATION_STATUS.INTERVIEW,
-      APPLICATION_STATUS.REJECTED,
-      APPLICATION_STATUS.HIRED,
-    ],
-    [APPLICATION_STATUS.INTERVIEW]: [
-      APPLICATION_STATUS.REJECTED,
-      APPLICATION_STATUS.HIRED,
-    ],
-  };
-
-  const allowedNext = validTransitions[application.status] || [];
-  if (!allowedNext.includes(status)) {
-    throw new AppError(
-      "Invalid application status transition.",
-      HTTP_STATUS.BAD_REQUEST
     );
   }
 
@@ -408,9 +517,55 @@ export const updateApplicationStatus = async (
   |--------------------------------------------------------------------------
   */
 
-  application.status = status as ApplicationStatus;
+  application.status = targetStatus as ApplicationStatus;
 
   await application.save();
+
+  try {
+    if (application.applicantId) {
+      let notifTitle = "Application Status Updated";
+      let notifBody = `Your application status for "${job.title}" has been updated to ${targetStatus}.`;
+
+      switch (targetStatus) {
+        case APPLICATION_STATUS.UNDER_REVIEW:
+          notifTitle = "Application Reviewed 👁️";
+          notifBody = `A recruiter reviewed your application for "${job.title}".`;
+          break;
+        case APPLICATION_STATUS.SHORTLISTED:
+          notifTitle = "Application Shortlisted ⭐";
+          notifBody = `Great news! Your application for "${job.title}" has been shortlisted.`;
+          break;
+        case APPLICATION_STATUS.INTERVIEW:
+          notifTitle = "Interview Invitation 📅";
+          notifBody = `A recruiter scheduled an interview for your application to "${job.title}".`;
+          break;
+        case APPLICATION_STATUS.HIRED:
+          notifTitle = "Job Offer Received 🎉";
+          notifBody = `Congratulations! You have received a job offer for "${job.title}".`;
+          break;
+        case APPLICATION_STATUS.REJECTED:
+          notifTitle = "Application Update 📋";
+          notifBody = `Your application status for "${job.title}" has been updated.`;
+          break;
+      }
+
+      await createNotification({
+        recipientId: application.applicantId.toString(),
+        senderId: recruiterId,
+        type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+        title: notifTitle,
+        body: notifBody,
+        link: `/candidate/applied`,
+        metadata: {
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+          status: targetStatus,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("Failed to send real-time notification on application status update:", err);
+  }
 
   return application;
 
