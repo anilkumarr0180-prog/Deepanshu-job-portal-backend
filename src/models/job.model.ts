@@ -19,6 +19,7 @@ export interface IJob extends Document {
   title: string;
   description: string;
   company: string;
+  companyId?: Types.ObjectId;
   location: string;
   salaryMin: number;
   salaryMax: number;
@@ -27,6 +28,7 @@ export interface IJob extends Document {
   status: JobStatus;
   skills: string[];
   recruiterId: Types.ObjectId;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,6 +53,12 @@ const jobSchema = new Schema<IJob>(
       trim: true,
     },
 
+    companyId: {
+      type: Schema.Types.ObjectId,
+      ref: "Company",
+      index: true,
+    },
+
     location: {
       type: String,
       required: true,
@@ -67,6 +75,13 @@ const jobSchema = new Schema<IJob>(
       type: Number,
       required: true,
       min: 0,
+      validate: {
+        validator: function (this: any, value: number) {
+          if (this.salaryMin === undefined) return true;
+          return value >= this.salaryMin;
+        },
+        message: "salaryMax must be greater than or equal to salaryMin",
+      },
     },
 
     employmentType: {
@@ -98,6 +113,13 @@ const jobSchema = new Schema<IJob>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
+    },
+
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
   },
   {
@@ -105,6 +127,12 @@ const jobSchema = new Schema<IJob>(
   }
 );
 
+// Compound indexes for searching, filtering, and listing
+jobSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
+jobSchema.index({ status: 1, isDeleted: 1, employmentType: 1, experienceLevel: 1 });
+jobSchema.index({ companyId: 1, status: 1, isDeleted: 1 });
+jobSchema.index({ title: "text", company: "text", description: "text" });
+
 const Job = model<IJob>("Job", jobSchema);
 
-export default Job;
+export default Job;

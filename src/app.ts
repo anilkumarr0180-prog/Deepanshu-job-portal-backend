@@ -7,6 +7,8 @@ import applicationRoutes from "./routes/application.routes";
 import profileRoutes from "./routes/profile.routes";
 import dashboardRoutes from "./routes/dashboard.route";
 import adminRoutes from "./routes/admin.routes";
+import companyRoutes from "./routes/company.routes";
+import savedJobRoutes from "./routes/saved-job.routes";
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -56,16 +58,34 @@ app.use(
 
 app.use(express.json());
 
+import mongoose from "mongoose";
+
 /*
 |--------------------------------------------------------------------------
-| Health Check
+| Root Service Metadata & Health Check (Production Best Practice)
 |--------------------------------------------------------------------------
 */
 
-app.get("/health", (_req, res) => {
+app.get("/", (_req, res) => {
   res.status(200).json({
     success: true,
-    message: "Server is running successfully.",
+    service: "Jobs Box API",
+    version: "1.0.0",
+    status: "UP",
+    documentation: "/api",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/health", (_req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
+  const statusCode = isDbConnected ? 200 : 503;
+
+  res.status(statusCode).json({
+    success: isDbConnected,
+    status: isDbConnected ? "UP" : "DEGRADED",
+    database: isDbConnected ? "connected" : "disconnected",
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -75,10 +95,13 @@ app.get("/health", (_req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.use((req, _res, next) => {
-  console.log(`${req.method} ${req.originalUrl}`);
-  next();
-});
+if (process.env.NODE_ENV === "development") {
+  app.use((req, _res, next) => {
+    console.log(`${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
+
 
 /*
 |--------------------------------------------------------------------------
@@ -97,6 +120,12 @@ app.use("/api", profileRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
 app.use("/api/admin", adminRoutes);
+
+app.use("/api/company", companyRoutes);
+
+app.use("/api/saved-jobs", savedJobRoutes);
+
+
 
 /*
 |--------------------------------------------------------------------------

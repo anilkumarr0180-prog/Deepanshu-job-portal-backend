@@ -6,6 +6,7 @@ import {
   JOB_STATUS,
   JobStatus,
 } from "../constants/job-status";
+import { USER_ROLES } from "../constants/roles";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
 
@@ -59,12 +60,48 @@ export const createJob = async (
   jobData: CreateJobInput,
   recruiterId: Types.ObjectId
 ) => {
+  const Company = (await import("../models/company.model")).default;
+  const company = await Company.findOne({ recruiterId });
+
+  if (!company) {
+    throw new AppError(
+      "Create your company profile before posting jobs.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  if (!company.isVerified) {
+    throw new AppError(
+      "Your company must be verified before posting jobs.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
   const job = await Job.create({
-    ...jobData,
+    title: jobData.title,
+    description: jobData.description,
+    company: company.name,
+    companyId: company._id,
+    location: jobData.location,
+    salaryMin: jobData.salaryMin,
+    salaryMax: jobData.salaryMax,
+    employmentType: jobData.employmentType,
+    experienceLevel: jobData.experienceLevel,
+    status: jobData.status,
+    skills: jobData.skills,
     recruiterId,
   });
 
   return job;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Regex Escape Helper
+|--------------------------------------------------------------------------
+*/
+const escapeRegex = (text: string): string => {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
 /*
@@ -87,26 +124,15 @@ export const getJobs = async (
   */
 
   if (filters.search) {
-    query.$or = [
-      {
-        title: {
-          $regex: filters.search,
-          $options: "i",
-        },
-      },
-      {
-        company: {
-          $regex: filters.search,
-          $options: "i",
-        },
-      },
-      {
-        description: {
-          $regex: filters.search,
-          $options: "i",
-        },
-      },
-    ];
+    const trimmed = filters.search.trim();
+    if (trimmed) {
+      const escaped = escapeRegex(trimmed);
+      query.$or = [
+        { title: { $regex: escaped, $options: "i" } },
+        { company: { $regex: escaped, $options: "i" } },
+        { description: { $regex: escaped, $options: "i" } },
+      ];
+    }
   }
 
   /*
@@ -116,10 +142,13 @@ export const getJobs = async (
   */
 
   if (filters.location) {
-    query.location = {
-      $regex: filters.location,
-      $options: "i",
-    };
+    const trimmed = filters.location.trim();
+    if (trimmed) {
+      query.location = {
+        $regex: escapeRegex(trimmed),
+        $options: "i",
+      };
+    }
   }
 
   /*
@@ -240,7 +269,8 @@ export const getJobs = async (
       .populate("recruiterId", "name email")
       .sort(sortOptions)
       .skip(skip)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
 
     Job.countDocuments(query),
   ]);
@@ -273,7 +303,8 @@ export const getMyJobs = async (
     .sort({
       createdAt: -1,
     })
-    .populate("recruiterId", "name email");
+    .populate("recruiterId", "name email")
+    .lean();
 
   return jobs;
 };
@@ -285,18 +316,32 @@ export const getMyJobs = async (
 */
 
 export const getJobById = async (
-  jobId: string
+  jobId: string,
+  user?: { userId: string; role: string }
 ) => {
-  const job = await Job.findById(jobId).populate(
-    "recruiterId",
-    "name email"
-  );
+  const job = await Job.findById(jobId)
+    .populate("recruiterId", "name email")
+    .lean();
 
   if (!job) {
     throw new AppError(
       "Job not found.",
       HTTP_STATUS.NOT_FOUND
     );
+  }
+
+  // Restrict access for non-ACTIVE jobs (only owner recruiter or admin can view draft/closed jobs)
+  if (job.status !== JOB_STATUS.ACTIVE) {
+    const rawRecruiterId = (job.recruiterId as unknown as { _id?: Types.ObjectId })._id || job.recruiterId;
+    const isOwner = user && user.userId === rawRecruiterId.toString();
+    const isAdmin = user && user.role === USER_ROLES.ADMIN;
+
+    if (!isOwner && !isAdmin) {
+      throw new AppError(
+        "Job not found.",
+        HTTP_STATUS.NOT_FOUND
+      );
+    }
   }
 
   return job;
@@ -313,6 +358,16 @@ export const updateJob = async (
   recruiterId: string,
   updateData: UpdateJobInput
 ) => {
+  const Company = (await import("../models/company.model")).default;
+  const company = await Company.findOne({ recruiterId });
+
+  if (!company || !company.isVerified) {
+    throw new AppError(
+      "Your company must be verified before updating jobs.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
   const job = await Job.findById(jobId);
 
   if (!job) {
@@ -329,7 +384,27 @@ export const updateJob = async (
     );
   }
 
-  Object.assign(job, updateData);
+  const effectiveSalaryMin =
+    updateData.salaryMin !== undefined ? updateData.salaryMin : job.salaryMin;
+  const effectiveSalaryMax =
+    updateData.salaryMax !== undefined ? updateData.salaryMax : job.salaryMax;
+
+  if (effectiveSalaryMin > effectiveSalaryMax) {
+    throw new AppError(
+      "Maximum salary must be greater than or equal to minimum salary.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  if (updateData.title !== undefined) job.title = updateData.title;
+  if (updateData.description !== undefined) job.description = updateData.description;
+  if (updateData.location !== undefined) job.location = updateData.location;
+  if (updateData.salaryMin !== undefined) job.salaryMin = updateData.salaryMin;
+  if (updateData.salaryMax !== undefined) job.salaryMax = updateData.salaryMax;
+  if (updateData.employmentType !== undefined) job.employmentType = updateData.employmentType;
+  if (updateData.experienceLevel !== undefined) job.experienceLevel = updateData.experienceLevel;
+  if (updateData.status !== undefined) job.status = updateData.status;
+  if (updateData.skills !== undefined) job.skills = updateData.skills;
 
   await job.save();
 
@@ -346,6 +421,16 @@ export const deleteJob = async (
   jobId: string,
   recruiterId: string
 ) => {
+  const Application = (await import("../models/application.model")).default;
+  const existingApplication = await Application.findOne({ jobId });
+
+  if (existingApplication) {
+    throw new AppError(
+      "Cannot delete a job with existing applications. Close the job instead.",
+      HTTP_STATUS.CONFLICT
+    );
+  }
+
   const job = await Job.findById(jobId);
 
   if (!job) {

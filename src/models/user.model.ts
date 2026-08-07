@@ -6,10 +6,14 @@ export interface IUser extends Document {
   email: string;
   password: string;
   role: UserRole;
+  /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile/RecruiterProfile */
   phone?: string;
+  /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile/RecruiterProfile */
   profilePicture?: string;
+  /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile */
   resumeUrl?: string;
   isBlocked: boolean;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +46,7 @@ const userSchema = new Schema<IUser>(
       default: USER_ROLES.CANDIDATE,
     },
 
+    /* Legacy Profile Fields - Retained for backward compatibility */
     phone: {
       type: String,
       trim: true,
@@ -61,12 +66,21 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
+
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
+// Optimal compound index covering role + status filtering
+userSchema.index({ role: 1, isBlocked: 1, isDeleted: 1 });
+
 const User = model<IUser>("User", userSchema);
 
-export default User;
+export default User;

@@ -1,98 +1,84 @@
 import { Router } from "express";
-
 import {
-  applyForJob,
-  getMyApplications,
-  getJobApplications,
-  updateApplicationStatus,
-  withdrawApplication,
-} from "../controllers/application.controller";
+  saveJob,
+  removeSavedJob,
+  getMySavedJobs,
+  checkSavedStatus,
+} from "../controllers/saved-job.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
 import { validate } from "../middleware/validation.middleware";
-
-import {
-  applyJobSchema,
-  getJobApplicationsSchema,
-  updateApplicationStatusSchema,
-  withdrawApplicationSchema,
-  getApplicationsQuerySchema,
-} from "../validations/application.validations";
-
 import { USER_ROLES } from "../constants/roles";
+import {
+  jobIdParamSchema,
+  getSavedJobsQuerySchema,
+} from "../validations/saved-job.validations";
 
 const router = Router();
 
 /*
 |--------------------------------------------------------------------------
-| Apply For Job
+| Get My Saved Jobs (Candidate Only)
+|--------------------------------------------------------------------------
+| Route: GET /api/saved-jobs
+| Access: Candidate Only
 |--------------------------------------------------------------------------
 */
+router.get(
+  "/",
+  authMiddleware,
+  authorize(USER_ROLES.CANDIDATE),
+  validate(getSavedJobsQuerySchema),
+  getMySavedJobs
+);
 
+/*
+|--------------------------------------------------------------------------
+| Check Saved Status
+|--------------------------------------------------------------------------
+| Route: GET /api/saved-jobs/:jobId/status
+| Access: Candidate Only
+|--------------------------------------------------------------------------
+*/
+router.get(
+  "/:jobId/status",
+  authMiddleware,
+  authorize(USER_ROLES.CANDIDATE),
+  validate(jobIdParamSchema),
+  checkSavedStatus
+);
+
+/*
+|--------------------------------------------------------------------------
+| Save Job (Bookmark)
+|--------------------------------------------------------------------------
+| Route: POST /api/saved-jobs/:jobId
+| Access: Candidate Only
+|--------------------------------------------------------------------------
+*/
 router.post(
-  "/jobs/:id/apply",
+  "/:jobId",
   authMiddleware,
   authorize(USER_ROLES.CANDIDATE),
-  validate(applyJobSchema),
-  applyForJob
+  validate(jobIdParamSchema),
+  saveJob
 );
 
 /*
 |--------------------------------------------------------------------------
-| Get My Applications
+| Remove Saved Job
+|--------------------------------------------------------------------------
+| Route: DELETE /api/saved-jobs/:jobId
+| Access: Candidate Only
 |--------------------------------------------------------------------------
 */
-
-router.get(
-  "/applications/my",
-  authMiddleware,
-  authorize(USER_ROLES.CANDIDATE),
-  validate(getApplicationsQuerySchema),
-  getMyApplications
-);
-
-/*
-|--------------------------------------------------------------------------
-| Get Applications For Job
-|--------------------------------------------------------------------------
-*/
-
-router.get(
-  "/jobs/:id/applications",
-  authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
-  validate(getJobApplicationsSchema),
-  validate(getApplicationsQuerySchema),
-  getJobApplications
-);
-
-/*
-|--------------------------------------------------------------------------
-| Update Application Status
-|--------------------------------------------------------------------------
-*/
-
-router.put(
-  "/applications/:id/status",
-  authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
-  validate(updateApplicationStatusSchema),
-  updateApplicationStatus
-);
-
-/*
-|--------------------------------------------------------------------------
-| Withdraw Application
-|--------------------------------------------------------------------------
-*/
-
 router.delete(
-  "/applications/:id",
+  "/:jobId",
   authMiddleware,
   authorize(USER_ROLES.CANDIDATE),
-  validate(withdrawApplicationSchema),
-  withdrawApplication
+  validate(jobIdParamSchema),
+  removeSavedJob
 );
 
 export default router;

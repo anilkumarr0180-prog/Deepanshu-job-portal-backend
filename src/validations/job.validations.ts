@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Types } from "mongoose";
 import { EMPLOYMENT_TYPE } from "../constants/employment-type";
 import { EXPERIENCE_LEVEL } from "../constants/experience-level";
 import { JOB_STATUS } from "../constants/job-status";
@@ -171,4 +172,72 @@ export const updateJobSchema = z.object({
         path: ["salaryMax"],
       }
     ),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Job ID Param Validation Schema
+|--------------------------------------------------------------------------
+*/
+const objectIdSchema = z.string().refine((val) => Types.ObjectId.isValid(val), {
+  message: "Invalid job ID format.",
+});
+
+export const jobIdParamSchema = z.object({
+  params: z.object({
+    id: objectIdSchema,
+  }),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Get Jobs Query Validation Schema
+|--------------------------------------------------------------------------
+*/
+export const getJobsQuerySchema = z.object({
+  query: z
+    .object({
+      page: z.coerce
+        .number()
+        .int("Page must be an integer.")
+        .min(1, "Page must be at least 1.")
+        .optional(),
+      limit: z.coerce
+        .number()
+        .int("Limit must be an integer.")
+        .min(1, "Limit must be at least 1.")
+        .max(100, "Limit cannot exceed 100.")
+        .optional(),
+      search: z.string().trim().optional(),
+      location: z.string().trim().optional(),
+      employmentType: z
+        .enum([
+          EMPLOYMENT_TYPE.FULL_TIME,
+          EMPLOYMENT_TYPE.PART_TIME,
+          EMPLOYMENT_TYPE.CONTRACT,
+          EMPLOYMENT_TYPE.INTERNSHIP,
+          EMPLOYMENT_TYPE.REMOTE,
+        ])
+        .optional(),
+      experienceLevel: z
+        .enum([
+          EXPERIENCE_LEVEL.FRESHER,
+          EXPERIENCE_LEVEL.ONE_TO_TWO_YEARS,
+          EXPERIENCE_LEVEL.THREE_TO_FIVE_YEARS,
+          EXPERIENCE_LEVEL.FIVE_PLUS_YEARS,
+        ])
+        .optional(),
+      status: z
+        .enum([
+          JOB_STATUS.DRAFT,
+          JOB_STATUS.ACTIVE,
+          JOB_STATUS.CLOSED,
+        ])
+        .optional(),
+      minSalary: z.coerce.number().min(0, "Minimum salary cannot be negative.").optional(),
+      maxSalary: z.coerce.number().min(0, "Maximum salary cannot be negative.").optional(),
+      skills: z.string().trim().optional(),
+      sort: z.enum(["newest", "oldest", "salary-high", "salary-low"]).optional(),
+    })
+    .optional(),
 });
