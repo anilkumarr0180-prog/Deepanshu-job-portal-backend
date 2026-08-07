@@ -58,16 +58,34 @@ app.use(
 
 app.use(express.json());
 
+import mongoose from "mongoose";
+
 /*
 |--------------------------------------------------------------------------
-| Health Check
+| Root Service Metadata & Health Check (Production Best Practice)
 |--------------------------------------------------------------------------
 */
 
-app.get("/health", (_req, res) => {
+app.get("/", (_req, res) => {
   res.status(200).json({
     success: true,
-    message: "Server is running successfully.",
+    service: "Jobs Box API",
+    version: "1.0.0",
+    status: "UP",
+    documentation: "/api",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/health", (_req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
+  const statusCode = isDbConnected ? 200 : 503;
+
+  res.status(statusCode).json({
+    success: isDbConnected,
+    status: isDbConnected ? "UP" : "DEGRADED",
+    database: isDbConnected ? "connected" : "disconnected",
+    timestamp: new Date().toISOString(),
   });
 });
 

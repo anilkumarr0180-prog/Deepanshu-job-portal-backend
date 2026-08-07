@@ -81,6 +81,7 @@ export const createJob = async (
     title: jobData.title,
     description: jobData.description,
     company: company.name,
+    companyId: company._id,
     location: jobData.location,
     salaryMin: jobData.salaryMin,
     salaryMax: jobData.salaryMax,

@@ -13,6 +13,7 @@ export interface IUser extends Document {
   /** @deprecated Retained for backward-compatible read fallback; primary owner is CandidateProfile */
   resumeUrl?: string;
   isBlocked: boolean;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,15 +66,20 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
+
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-userSchema.index({ role: 1 });
-userSchema.index({ isBlocked: 1 });
-userSchema.index({ role: 1, isBlocked: 1 });
+// Optimal compound index covering role + status filtering
+userSchema.index({ role: 1, isBlocked: 1, isDeleted: 1 });
 
 const User = model<IUser>("User", userSchema);
 

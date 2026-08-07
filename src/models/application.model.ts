@@ -11,6 +11,7 @@ export interface IApplication extends Document {
   resume: string;
   coverLetter?: string;
   status: ApplicationStatus;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -55,6 +56,12 @@ const applicationSchema = new Schema<IApplication>(
       enum: Object.values(APPLICATION_STATUS),
       default: APPLICATION_STATUS.APPLIED,
     },
+
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -71,7 +78,8 @@ applicationSchema.index(
   }
 );
 
-applicationSchema.index({ applicantId: 1, createdAt: -1 });
+applicationSchema.index({ applicantId: 1, isDeleted: 1, createdAt: -1 });
+applicationSchema.index({ jobId: 1, status: 1, isDeleted: 1 });
 
 const Application = model<IApplication>(
   "Application",

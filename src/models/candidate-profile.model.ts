@@ -40,6 +40,7 @@ export interface ICandidateProfile extends Document {
   state?: string;
   country?: string;
   socialLinks?: ICandidateSocialLinks;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -85,7 +86,16 @@ const candidateProfileSchema = new Schema<ICandidateProfile>(
         company: { type: String, required: true, trim: true },
         location: { type: String, trim: true },
         startDate: { type: Date },
-        endDate: { type: Date },
+        endDate: {
+          type: Date,
+          validate: {
+            validator: function (this: any, value: Date) {
+              if (!value || !this.startDate) return true;
+              return value >= this.startDate;
+            },
+            message: "Experience end date cannot be earlier than start date",
+          },
+        },
         current: { type: Boolean, default: false },
         description: { type: String, trim: true },
       },
@@ -96,7 +106,16 @@ const candidateProfileSchema = new Schema<ICandidateProfile>(
         degree: { type: String, required: true, trim: true },
         fieldOfStudy: { type: String, trim: true },
         startDate: { type: Date },
-        endDate: { type: Date },
+        endDate: {
+          type: Date,
+          validate: {
+            validator: function (this: any, value: Date) {
+              if (!value || !this.startDate) return true;
+              return value >= this.startDate;
+            },
+            message: "Education end date cannot be earlier than start date",
+          },
+        },
         current: { type: Boolean, default: false },
       },
     ],
@@ -118,6 +137,11 @@ const candidateProfileSchema = new Schema<ICandidateProfile>(
       portfolio: { type: String, trim: true },
       twitter: { type: String, trim: true },
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -125,6 +149,7 @@ const candidateProfileSchema = new Schema<ICandidateProfile>(
 );
 
 candidateProfileSchema.index({ skills: 1 });
+candidateProfileSchema.index({ city: 1, country: 1 });
 
 const CandidateProfile = model<ICandidateProfile>(
   "CandidateProfile",

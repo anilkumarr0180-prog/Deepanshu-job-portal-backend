@@ -29,6 +29,7 @@ const savedJobSchema = new Schema<ISavedJob>(
 
 // Compound unique index to prevent duplicate saved jobs per user
 savedJobSchema.index({ userId: 1, jobId: 1 }, { unique: true });
+savedJobSchema.index({ userId: 1, createdAt: -1 });
 
 const SavedJob = model<ISavedJob>("SavedJob", savedJobSchema);
 

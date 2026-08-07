@@ -15,6 +15,7 @@ export interface IRecruiterProfile extends Document {
   companyId?: Types.ObjectId;
   bio?: string;
   socialLinks?: IRecruiterSocialLinks;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,6 +58,11 @@ const recruiterProfileSchema = new Schema<IRecruiterProfile>(
       linkedin: { type: String, trim: true },
       twitter: { type: String, trim: true },
       website: { type: String, trim: true },
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
   },
   {

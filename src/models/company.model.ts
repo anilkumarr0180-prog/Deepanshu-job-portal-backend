@@ -24,6 +24,7 @@ export interface ICompany extends Document {
   recruiterId: Types.ObjectId;
   socialLinks?: ISocialLinks;
   isVerified: boolean;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +54,8 @@ const companySchema = new Schema<ICompany>(
     },
     foundedYear: {
       type: Number,
+      min: [1800, "Founded year must be 1800 or later"],
+      max: [new Date().getFullYear(), "Founded year cannot be in the future"],
     },
     description: {
       type: String,
@@ -88,7 +91,6 @@ const companySchema = new Schema<ICompany>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      unique: true,
       index: true,
     },
     socialLinks: {
@@ -101,6 +103,11 @@ const companySchema = new Schema<ICompany>(
       type: Boolean,
       default: false,
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -108,6 +115,7 @@ const companySchema = new Schema<ICompany>(
 );
 
 companySchema.index({ name: "text", industry: "text" });
+companySchema.index({ isVerified: 1, isDeleted: 1 });
 
 const Company = model<ICompany>("Company", companySchema);
 
