@@ -15,11 +15,26 @@ import { APPLICATION_STATUS } from "../constants/application-status";
 export const getRecruiterDashboard = async (
   recruiterId: string
 ) => {
+  if (!Types.ObjectId.isValid(recruiterId)) {
+    return {
+      totalJobs: 0,
+      activeJobs: 0,
+      draftJobs: 0,
+      closedJobs: 0,
+      totalApplications: 0,
+      recentJobs: [],
+      recentApplications: [],
+    };
+  }
+
   const recruiterObjectId = new Types.ObjectId(recruiterId);
 
-  const recruiterJobIds = await Job.find({
+  const recruiterJobs = await Job.find({
     recruiterId,
-  }).distinct("_id");
+    isDeleted: { $ne: true },
+  }).select("_id").lean();
+
+  const recruiterJobIds = recruiterJobs.map((j) => j._id);
 
   const [
     jobStatusCounts,
@@ -28,7 +43,7 @@ export const getRecruiterDashboard = async (
     recentApplications,
   ] = await Promise.all([
     Job.aggregate([
-      { $match: { recruiterId: recruiterObjectId } },
+      { $match: { recruiterId: recruiterObjectId, isDeleted: { $ne: true } } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]),
 
@@ -40,6 +55,7 @@ export const getRecruiterDashboard = async (
 
     Job.find({
       recruiterId,
+      isDeleted: { $ne: true },
     })
       .sort({
         createdAt: -1,
@@ -68,8 +84,10 @@ export const getRecruiterDashboard = async (
       .lean(),
   ]);
 
-  const statusMap = jobStatusCounts.reduce<Record<string, number>>((acc, item) => {
-    acc[item._id] = item.count;
+  const statusMap = (jobStatusCounts || []).reduce<Record<string, number>>((acc, item) => {
+    if (item && item._id) {
+      acc[item._id] = item.count;
+    }
     return acc;
   }, {});
 
@@ -78,8 +96,8 @@ export const getRecruiterDashboard = async (
   const closedJobs = statusMap[JOB_STATUS.CLOSED] || 0;
   const totalJobs = activeJobs + draftJobs + closedJobs;
 
-  const validRecentApplications = recentApplications.filter(
-    (app) => app.jobId !== null
+  const validRecentApplications = (recentApplications || []).filter(
+    (app) => app && app.jobId !== null
   );
 
   return {
@@ -88,7 +106,7 @@ export const getRecruiterDashboard = async (
     draftJobs,
     closedJobs,
     totalApplications,
-    recentJobs,
+    recentJobs: recentJobs || [],
     recentApplications: validRecentApplications,
   };
 };
@@ -102,6 +120,19 @@ export const getRecruiterDashboard = async (
 export const getCandidateDashboard = async (
   candidateId: string
 ) => {
+  if (!Types.ObjectId.isValid(candidateId)) {
+    return {
+      totalApplications: 0,
+      applied: 0,
+      shortlisted: 0,
+      interview: 0,
+      hired: 0,
+      rejected: 0,
+      totalSavedJobs: 0,
+      recentApplications: [],
+    };
+  }
+
   const candidateObjectId = new Types.ObjectId(candidateId);
 
   const [
@@ -137,8 +168,10 @@ export const getCandidateDashboard = async (
       .lean(),
   ]);
 
-  const statusMap = statusCounts.reduce<Record<string, number>>((acc, item) => {
-    acc[item._id] = item.count;
+  const statusMap = (statusCounts || []).reduce<Record<string, number>>((acc, item) => {
+    if (item && item._id) {
+      acc[item._id] = item.count;
+    }
     return acc;
   }, {});
 
@@ -149,8 +182,8 @@ export const getCandidateDashboard = async (
   const rejected = statusMap[APPLICATION_STATUS.REJECTED] || 0;
   const totalApplications = applied + shortlisted + interview + hired + rejected;
 
-  const validRecentApplications = recentApplications.filter(
-    (app) => app.jobId !== null
+  const validRecentApplications = (recentApplications || []).filter(
+    (app) => app && app.jobId !== null
   );
 
   return {
@@ -163,4 +196,4 @@ export const getCandidateDashboard = async (
     totalSavedJobs,
     recentApplications: validRecentApplications,
   };
-};
+};

@@ -11,6 +11,7 @@ import companyRoutes from "./routes/company.routes";
 import savedJobRoutes from "./routes/saved-job.routes";
 import notificationRoutes from "./routes/notification.routes";
 import chatRoutes from "./routes/chat.routes";
+import locationRoutes from "./routes/location.routes";
 
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
@@ -132,6 +133,8 @@ app.use("/api/notifications", notificationRoutes);
 
 app.use("/api/chat", chatRoutes);
 app.use("/api/v1/chat", chatRoutes);
+
+app.use("/api/location", locationRoutes);
 
 
 

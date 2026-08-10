@@ -43,10 +43,19 @@ export const updateApplicationStatusSchema = z.object({
   }),
   body: z.object({
     status: z.enum([
+      APPLICATION_STATUS.APPLIED,
+      APPLICATION_STATUS.UNDER_REVIEW,
       APPLICATION_STATUS.SHORTLISTED,
       APPLICATION_STATUS.INTERVIEW,
       APPLICATION_STATUS.REJECTED,
       APPLICATION_STATUS.HIRED,
+      "applied",
+      "under review",
+      "under_review",
+      "shortlisted",
+      "interview",
+      "rejected",
+      "hired",
     ]),
   }),
 });

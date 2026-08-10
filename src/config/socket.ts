@@ -4,6 +4,8 @@ import { verifyAccessToken } from "../utils/jwt";
 import { UserRole } from "../constants/roles";
 import Conversation from "../models/conversation.model";
 import * as chatService from "../services/chat.service";
+import * as locationService from "../services/location.service";
+import { LocationPrivacyLevel, LOCATION_CONFIG } from "../constants/location";
 
 export interface AuthenticatedSocket extends Socket {
   user?: {

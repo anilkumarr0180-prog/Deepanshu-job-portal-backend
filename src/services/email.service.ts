@@ -352,6 +352,169 @@ export const sendJobApplicationRecruiterEmail = async (
   }
 };
 
+/*
+|--------------------------------------------------------------------------
+| Send Application Status Update Email to Applicant (Candidate)
+|--------------------------------------------------------------------------
+*/
+export interface ApplicationStatusUpdateEmailPayload {
+  applicantName: string;
+  applicantEmail: string;
+  jobTitle: string;
+  companyName: string;
+  status: string;
+  applicationId: string;
+}
+
+export const sendApplicationStatusUpdateEmail = async (
+  payload: ApplicationStatusUpdateEmailPayload
+): Promise<boolean> => {
+  const { applicantName, applicantEmail, jobTitle, companyName, status } = payload;
+  const from = getFromHeader();
+
+  let statusHeader = "Application Status Update";
+  let statusBg = "#dbeafe";
+  let statusTextColor = "#1e40af";
+  let messageBody = `Your application status for <strong>${jobTitle}</strong> at <strong>${companyName}</strong> has been updated to <strong>${status}</strong>.`;
+
+  switch (status) {
+    case "Shortlisted":
+      statusHeader = "Congratulations! Application Shortlisted ⭐";
+      statusBg = "#d1fae5";
+      statusTextColor = "#065f46";
+      messageBody = `Great news! The hiring team at <strong>${companyName}</strong> has reviewed your profile and shortlisted your application for <strong>${jobTitle}</strong>.`;
+      break;
+    case "Interview":
+      statusHeader = "Interview Invitation 📅";
+      statusBg = "#ede9fe";
+      statusTextColor = "#5b21b6";
+      messageBody = `Exciting news! You have been invited to an interview for the <strong>${jobTitle}</strong> position at <strong>${companyName}</strong>. The recruiter will reach out with schedule details soon.`;
+      break;
+    case "Hired":
+      statusHeader = "Job Offer Received 🎉";
+      statusBg = "#ecfdf5";
+      statusTextColor = "#047857";
+      messageBody = `Congratulations! <strong>${companyName}</strong> has selected you for the <strong>${jobTitle}</strong> role. Check your candidate dashboard for details.`;
+      break;
+    case "Rejected":
+      statusHeader = "Application Status Update 📋";
+      statusBg = "#fee2e2";
+      statusTextColor = "#991b1b";
+      messageBody = `Thank you for your interest in the <strong>${jobTitle}</strong> position at <strong>${companyName}</strong>. After careful consideration, the hiring team has decided to move forward with other candidates at this time.`;
+      break;
+    case "Under Review":
+      statusHeader = "Application Under Review 👁️";
+      statusBg = "#dbeafe";
+      statusTextColor = "#1e40af";
+      messageBody = `A recruiter at <strong>${companyName}</strong> has opened and is currently reviewing your application for <strong>${jobTitle}</strong>.`;
+      break;
+  }
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${statusHeader}</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+          .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+          .content { padding: 32px 24px; }
+          .greeting { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #0f172a; }
+          .card { background: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 12px; margin: 24px 0; }
+          .card-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 14px; }
+          .card-row:last-child { margin-bottom: 0; }
+          .label { color: #64748b; font-weight: 500; }
+          .value { color: #0f172a; font-weight: 600; }
+          .badge { display: inline-block; background: ${statusBg}; color: ${statusTextColor}; padding: 6px 14px; border-radius: 12px; font-size: 13px; font-weight: 700; text-transform: uppercase; }
+          .btn { display: block; width: fit-content; margin: 28px auto 0 auto; background: #3C65F5; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-weight: 600; font-size: 14px; text-align: center; }
+          .footer { background: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${statusHeader}</h1>
+          </div>
+          <div class="content">
+            <div class="greeting">Hello ${applicantName || "Candidate"},</div>
+            <p style="line-height: 1.6; color: #334155; font-size: 15px;">
+              ${messageBody}
+            </p>
+            
+            <div class="card">
+              <div class="card-row">
+                <span class="label">Position</span>
+                <span class="value">${jobTitle}</span>
+              </div>
+              <div class="card-row">
+                <span class="label">Company</span>
+                <span class="value">${companyName}</span>
+              </div>
+              <div class="card-row">
+                <span class="label">Updated Status</span>
+                <span class="value"><span class="badge">${status}</span></span>
+              </div>
+              <div class="card-row">
+                <span class="label">Updated Date</span>
+                <span class="value">${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+              </div>
+            </div>
+
+            <a href="http://localhost:5173/candidate/applied" class="btn">View Application Status &rarr;</a>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Inc. All rights reserved.</p>
+            <p>This is an automated operational alert regarding your job application.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    const { transporter, isTestAccount } = await getTransporter();
+    const info = await transporter.sendMail({
+      from,
+      to: applicantEmail,
+      subject: `${statusHeader}: ${jobTitle} at ${companyName}`,
+      html,
+    });
+    console.log(`[SMTP] Application status update email sent to ${applicantEmail}: ${info.messageId}`);
+    if (isTestAccount) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - STATUS UPDATE]: ${previewUrl}`);
+    }
+    return true;
+  } catch (error: any) {
+    console.warn(`[SMTP WARN] Primary SMTP send for status update (${applicantEmail}) failed: ${error?.message || error}. Falling back to Ethereal...`);
+    try {
+      const testAccount = await nodemailer.createTestAccount();
+      const fallbackTransporter = nodemailer.createTransport({
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: { user: testAccount.user, pass: testAccount.pass },
+      });
+      const info = await fallbackTransporter.sendMail({
+        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
+        to: applicantEmail,
+        subject: `${statusHeader}: ${jobTitle} at ${companyName}`,
+        html,
+      });
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - STATUS UPDATE (ETHEREAL FALLBACK)]: ${previewUrl}`);
+      return true;
+    } catch (fallbackErr) {
+      console.error(`[SMTP ERROR] Fallback transport also failed for status update (${applicantEmail}):`, fallbackErr);
+      return false;
+    }
+  }
+};
+
 
 /*
 |--------------------------------------------------------------------------

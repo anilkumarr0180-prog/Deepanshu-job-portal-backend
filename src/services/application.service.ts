@@ -5,6 +5,7 @@ import CandidateProfile from "../models/candidate-profile.model";
 import {
   sendJobApplicationApplicantEmail,
   sendJobApplicationRecruiterEmail,
+  sendApplicationStatusUpdateEmail,
 } from "./email.service";
 
 import { AppError } from "../utils/app-error";
@@ -432,6 +433,62 @@ export const getJobApplications = async (
 
 /*
 |--------------------------------------------------------------------------
+| Get All Recruiter Applications (Across All Posted Jobs)
+|--------------------------------------------------------------------------
+*/
+export const getRecruiterApplications = async (
+  recruiterId: string,
+  filters: ApplicationFilters = {}
+) => {
+  const Job = (await import("../models/job.model")).default;
+  const recruiterJobs = await Job.find({ recruiterId }).select("_id title").lean();
+  const jobIds = recruiterJobs.map((j) => j._id);
+  const jobTitleMap = new Map<string, string>();
+  recruiterJobs.forEach((j) => jobTitleMap.set(j._id.toString(), j.title));
+
+  const query: Record<string, unknown> = {
+    jobId: { $in: jobIds },
+  };
+
+  if (filters.status) {
+    query.status = filters.status;
+  }
+
+  const applications = await Application.find(query)
+    .populate({
+      path: "jobId",
+      select: "title company location salaryMin salaryMax employmentType experienceLevel status",
+    })
+    .populate({
+      path: "applicantId",
+      select: "name email phone resumeUrl",
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const formattedApplications = applications.map((app) => {
+    const rawJobId = app.jobId
+      ? typeof app.jobId === "object"
+        ? (app.jobId as any)._id?.toString() || ""
+        : String(app.jobId)
+      : "";
+
+    const jobTitle =
+      (app.jobId as any)?.title ||
+      jobTitleMap.get(rawJobId || "") ||
+      "Job Application";
+
+    return {
+      ...app,
+      jobTitle,
+    };
+  });
+
+  return formattedApplications;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Update Application Status
 |--------------------------------------------------------------------------
 */
@@ -496,7 +553,9 @@ export const updateApplicationStatus = async (
   };
 
   const targetStatus =
-    normalizedStatusMap[status.toLowerCase()] || status;
+    typeof status === "string"
+      ? normalizedStatusMap[status.toLowerCase()] || status
+      : status;
 
   if (
     application.status === APPLICATION_STATUS.HIRED ||
@@ -562,9 +621,26 @@ export const updateApplicationStatus = async (
           status: targetStatus,
         },
       });
+
+      // Dispatch SMTP Email to Candidate regarding status update
+      const candidateUser = await User.findById(application.applicantId)
+        .select("name email")
+        .lean();
+
+      if (candidateUser && candidateUser.email) {
+        const companyName = job.company || "JobsBox Partner";
+        void sendApplicationStatusUpdateEmail({
+          applicantName: candidateUser.name || "Candidate",
+          applicantEmail: candidateUser.email,
+          jobTitle: job.title,
+          companyName,
+          status: targetStatus,
+          applicationId: application._id.toString(),
+        });
+      }
     }
   } catch (err) {
-    console.error("Failed to send real-time notification on application status update:", err);
+    console.error("Failed to send notification or email on application status update:", err);
   }
 
   return application;
