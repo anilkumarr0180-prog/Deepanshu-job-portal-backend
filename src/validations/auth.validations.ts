@@ -73,3 +73,18 @@ export const loginSchema = z.object({
       .min(1, "Password is required."),
   }),
 });
+
+export const googleAuthSchema = z.object({
+  body: z
+    .object({
+      credential: z.string().trim().optional(),
+      token: z.string().trim().optional(),
+      role: z
+        .enum([USER_ROLES.CANDIDATE, USER_ROLES.RECRUITER])
+        .optional(),
+    })
+    .refine((data) => Boolean(data.credential || data.token), {
+      message: "Either credential or token must be provided.",
+      path: ["credential"],
+    }),
+});

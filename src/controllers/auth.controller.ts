@@ -51,6 +51,18 @@ export const login = asyncHandler(
   }
 );
 
+export const googleAuth = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const result = await authService.googleAuth(req.body);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Google authentication successful.",
+      data: result,
+    });
+  }
+);
+
 export const getCurrentUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const user = await authService.getCurrentUser(req.user!.userId);

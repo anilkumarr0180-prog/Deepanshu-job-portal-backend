@@ -1,3 +1,4 @@
+import { OAuth2Client } from "google-auth-library";
 import User from "../models/user.model";
 import CandidateProfile from "../models/candidate-profile.model";
 import RecruiterProfile from "../models/recruiter-profile.model";
@@ -7,6 +8,8 @@ import { hashPassword, comparePassword } from "../utils/password";
 import { generateAccessToken } from "../utils/jwt";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 /*
 |--------------------------------------------------------------------------
@@ -37,6 +40,12 @@ interface RegisterUserInput {
 interface LoginUserInput {
   email: string;
   password: string;
+}
+
+interface GoogleAuthInput {
+  credential?: string;
+  token?: string;
+  role?: typeof USER_ROLES.CANDIDATE | typeof USER_ROLES.RECRUITER;
 }
 
 export const register = async (userData: RegisterUserInput) => {
@@ -123,6 +132,13 @@ export const login = async (
   }
 
   // Verify password
+  if (!user.password) {
+    throw new AppError(
+      "This account was registered using Google Login. Please sign in with Google.",
+      HTTP_STATUS.UNAUTHORIZED
+    );
+  }
+
   const isPasswordValid = await comparePassword(
     userData.password,
     user.password
@@ -144,6 +160,145 @@ export const login = async (
   return {
     user: sanitizeUser(user),
     accessToken,
+  };
+};
+
+export const googleAuth = async (input: GoogleAuthInput) => {
+  const idToken = input.credential || input.token;
+  if (!idToken) {
+    throw new AppError(
+      "Google authentication token is required.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  let payload: { sub: string; email?: string; name?: string; picture?: string } | undefined;
+
+  try {
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: googleClientId && !googleClientId.includes("your-google-client-id") ? googleClientId : undefined,
+    });
+    const googlePayload = ticket.getPayload();
+    if (googlePayload) {
+      payload = {
+        sub: googlePayload.sub,
+        email: googlePayload.email,
+        name: googlePayload.name,
+        picture: googlePayload.picture,
+      };
+    }
+  } catch (error) {
+    // Fallback: If verifyIdToken fails (e.g. token is an OAuth2 access_token), query Google UserInfo API
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/oauth2/v3/userinfo?access_token=${idToken}`
+      );
+      if (response.ok) {
+        const userInfo = (await response.json()) as any;
+        if (userInfo && userInfo.sub && userInfo.email) {
+          payload = {
+            sub: userInfo.sub,
+            email: userInfo.email,
+            name: userInfo.name,
+            picture: userInfo.picture,
+          };
+        }
+      }
+    } catch (fallbackError) {
+      // Ignored
+    }
+  }
+
+  if (!payload || !payload.email) {
+    throw new AppError(
+      "Failed to verify Google authentication token.",
+      HTTP_STATUS.UNAUTHORIZED
+    );
+  }
+
+  const { sub: googleId, email, name, picture } = payload;
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // Search existing user by googleId or email
+  let user = await User.findOne({
+    $or: [{ googleId }, { email: normalizedEmail }],
+  });
+
+  let isNewUser = false;
+  let isAccountLinked = false;
+
+  if (user) {
+    if (user.isBlocked) {
+      throw new AppError(
+        "Your account has been blocked.",
+        HTTP_STATUS.FORBIDDEN
+      );
+    }
+
+    let isModified = false;
+    if (!user.googleId) {
+      user.googleId = googleId;
+      isModified = true;
+      isAccountLinked = true;
+    }
+    if (!user.profilePicture && picture) {
+      user.profilePicture = picture;
+      isModified = true;
+    }
+    if (!user.isEmailVerified) {
+      user.isEmailVerified = true;
+      isModified = true;
+    }
+
+    if (isModified) {
+      await user.save();
+    }
+  } else {
+    isNewUser = true;
+    // Role selection: default to CANDIDATE if not specified or invalid
+    const requestedRole =
+      input.role && [USER_ROLES.CANDIDATE, USER_ROLES.RECRUITER].includes(input.role as any)
+        ? input.role
+        : USER_ROLES.CANDIDATE;
+
+    user = await User.create({
+      name: name || "Google User",
+      email: normalizedEmail,
+      googleId,
+      authProvider: "google",
+      profilePicture: picture,
+      role: requestedRole,
+      isEmailVerified: true,
+    });
+
+    try {
+      if (user.role === USER_ROLES.RECRUITER) {
+        await RecruiterProfile.create({
+          userId: user._id,
+        });
+      } else {
+        await CandidateProfile.create({
+          userId: user._id,
+        });
+      }
+    } catch (profileError) {
+      await User.findByIdAndDelete(user._id);
+      throw profileError;
+    }
+  }
+
+  const accessToken = generateAccessToken({
+    userId: user.id,
+    role: user.role,
+  });
+
+  return {
+    user: sanitizeUser(user),
+    accessToken,
+    isNewUser,
+    isAccountLinked,
   };
 };
 

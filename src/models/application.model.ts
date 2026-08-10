@@ -7,6 +7,7 @@ import {
 
 export interface IApplication extends Document {
   jobId: Types.ObjectId;
+  candidateProfileId?: Types.ObjectId;
   applicantId: Types.ObjectId;
   resume: string;
   coverLetter?: string;
@@ -30,6 +31,12 @@ const applicationSchema = new Schema<IApplication>(
       type: Schema.Types.ObjectId,
       ref: "Job",
       required: true,
+      index: true,
+    },
+
+    candidateProfileId: {
+      type: Schema.Types.ObjectId,
+      ref: "CandidateProfile",
       index: true,
     },
 
@@ -65,6 +72,8 @@ const applicationSchema = new Schema<IApplication>(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
@@ -79,6 +88,8 @@ applicationSchema.index(
 );
 
 applicationSchema.index({ applicantId: 1, isDeleted: 1, createdAt: -1 });
+applicationSchema.index({ applicantId: 1, status: 1 });
+applicationSchema.index({ candidateProfileId: 1, isDeleted: 1, createdAt: -1 });
 applicationSchema.index({ jobId: 1, status: 1, isDeleted: 1 });
 
 const Application = model<IApplication>(
@@ -86,4 +97,4 @@ const Application = model<IApplication>(
   applicationSchema
 );
 
-export default Application;
+export default Application;

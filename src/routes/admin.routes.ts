@@ -8,7 +8,10 @@ import {
   getAdminJobs,
   deleteAdminJob,
   verifyCompany,
+  getSmtpStatus,
+  sendTestEmailController,
 } from "../controllers/admin.controller";
+
 
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
@@ -119,4 +122,25 @@ router.patch(
   verifyCompany
 );
 
-export default router;
+/*
+|--------------------------------------------------------------------------
+| SMTP Configuration & Test Routes
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/smtp-status",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  getSmtpStatus
+);
+
+router.post(
+  "/send-test-email",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  sendTestEmailController
+);
+
+export default router;
+

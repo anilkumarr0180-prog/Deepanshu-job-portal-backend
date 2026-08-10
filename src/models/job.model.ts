@@ -23,11 +23,18 @@ export interface IJob extends Document {
   location: string;
   salaryMin: number;
   salaryMax: number;
+  currency: string;
+  salaryPeriod: string;
+  workMode: string;
   employmentType: EmploymentType;
   experienceLevel: ExperienceLevel;
   status: JobStatus;
   skills: string[];
+  skillIds?: Types.ObjectId[];
+  postedBy: Types.ObjectId;
   recruiterId: Types.ObjectId;
+  publishedAt?: Date;
+  expiresAt?: Date;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -84,6 +91,24 @@ const jobSchema = new Schema<IJob>(
       },
     },
 
+    currency: {
+      type: String,
+      default: "USD",
+      trim: true,
+    },
+
+    salaryPeriod: {
+      type: String,
+      enum: ["yearly", "monthly", "hourly"],
+      default: "yearly",
+    },
+
+    workMode: {
+      type: String,
+      enum: ["onsite", "remote", "hybrid"],
+      default: "onsite",
+    },
+
     employmentType: {
       type: String,
       enum: Object.values(EMPLOYMENT_TYPE),
@@ -109,11 +134,33 @@ const jobSchema = new Schema<IJob>(
       },
     ],
 
+    skillIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Skill",
+      },
+    ],
+
+    postedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "RecruiterProfile",
+      index: true,
+    },
+
     recruiterId: {
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
       index: true,
+    },
+
+    publishedAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    expiresAt: {
+      type: Date,
     },
 
     isDeleted: {
@@ -124,15 +171,19 @@ const jobSchema = new Schema<IJob>(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
 // Compound indexes for searching, filtering, and listing
 jobSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
+jobSchema.index({ recruiterId: 1, status: 1, isDeleted: 1, createdAt: -1 });
 jobSchema.index({ status: 1, isDeleted: 1, employmentType: 1, experienceLevel: 1 });
 jobSchema.index({ companyId: 1, status: 1, isDeleted: 1 });
+jobSchema.index({ postedBy: 1, isDeleted: 1 });
 jobSchema.index({ title: "text", company: "text", description: "text" });
 
 const Job = model<IJob>("Job", jobSchema);
 
-export default Job;
+export default Job;

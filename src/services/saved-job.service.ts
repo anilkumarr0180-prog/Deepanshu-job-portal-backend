@@ -52,8 +52,12 @@ export const saveJob = async (userId: string, jobId: string) => {
     );
   }
 
+  const CandidateProfile = (await import("../models/candidate-profile.model")).default;
+  const candidateProfile = await CandidateProfile.findOne({ userId }).select("_id").lean();
+
   await SavedJob.create({
     userId,
+    candidateProfileId: candidateProfile?._id,
     jobId,
   });
 

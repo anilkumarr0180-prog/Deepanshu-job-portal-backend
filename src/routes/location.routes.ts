@@ -1,113 +1,87 @@
 import { Router } from "express";
-
 import {
-  applyForJob,
-  getMyApplications,
-  getJobApplications,
-  getRecruiterApplications,
-  updateApplicationStatus,
-  withdrawApplication,
-} from "../controllers/application.controller";
-
+  startLocationShare,
+  stopLocationShare,
+  getLocationShareStatus,
+  getCandidateLocation,
+  reverseGeocode,
+  detectIpLocation,
+} from "../controllers/location.controller";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
 import { validate } from "../middleware/validation.middleware";
-
 import {
-  applyJobSchema,
-  getJobApplicationsSchema,
-  updateApplicationStatusSchema,
-  withdrawApplicationSchema,
-  getApplicationsQuerySchema,
-} from "../validations/application.validations";
-
+  startLocationShareSchema,
+  stopLocationShareSchema,
+  getApplicationLocationSchema,
+} from "../validations/location.validations";
 import { USER_ROLES } from "../constants/roles";
 
 const router = Router();
 
 /*
 |--------------------------------------------------------------------------
-| Apply For Job
+| Candidate: Start Location Sharing
 |--------------------------------------------------------------------------
 */
-
 router.post(
-  "/jobs/:id/apply",
+  "/share/start",
   authMiddleware,
   authorize(USER_ROLES.CANDIDATE),
-  validate(applyJobSchema),
-  applyForJob
+  validate(startLocationShareSchema),
+  startLocationShare
 );
 
 /*
 |--------------------------------------------------------------------------
-| Get My Applications
+| Candidate: Stop Location Sharing
 |--------------------------------------------------------------------------
 */
-
-router.get(
-  "/applications/my",
+router.post(
+  "/share/stop",
   authMiddleware,
   authorize(USER_ROLES.CANDIDATE),
-  validate(getApplicationsQuerySchema),
-  getMyApplications
+  validate(stopLocationShareSchema),
+  stopLocationShare
 );
 
 /*
 |--------------------------------------------------------------------------
-| Get All Applications For Recruiter Across All Jobs
+| Get Sharing Status for Application
 |--------------------------------------------------------------------------
 */
-
 router.get(
-  "/applications/recruiter",
+  "/share/status/:applicationId",
   authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
-  validate(getApplicationsQuerySchema),
-  getRecruiterApplications
+  validate(getApplicationLocationSchema),
+  getLocationShareStatus
 );
 
 /*
 |--------------------------------------------------------------------------
-| Get Applications For Job
+| Recruiter: Get Candidate Location for Application
 |--------------------------------------------------------------------------
 */
-
 router.get(
-  "/jobs/:id/applications",
+  "/application/:applicationId",
   authMiddleware,
   authorize(USER_ROLES.RECRUITER),
-  validate(getJobApplicationsSchema),
-  validate(getApplicationsQuerySchema),
-  getJobApplications
+  validate(getApplicationLocationSchema),
+  getCandidateLocation
 );
 
 /*
 |--------------------------------------------------------------------------
-| Update Application Status
+| Reverse Geocode via Server Proxy
 |--------------------------------------------------------------------------
 */
-
-router.put(
-  "/applications/:id/status",
-  authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
-  validate(updateApplicationStatusSchema),
-  updateApplicationStatus
-);
+router.post("/reverse-geocode", reverseGeocode);
 
 /*
 |--------------------------------------------------------------------------
-| Withdraw Application
+| Zero-Click IP Location Detection
 |--------------------------------------------------------------------------
 */
-
-router.delete(
-  "/applications/:id",
-  authMiddleware,
-  authorize(USER_ROLES.CANDIDATE),
-  validate(withdrawApplicationSchema),
-  withdrawApplication
-);
+router.get("/ip-detect", detectIpLocation);
 
 export default router;

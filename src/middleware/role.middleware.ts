@@ -29,7 +29,20 @@ export const authorize =
     |--------------------------------------------------------------------------
     */
 
-    if (!allowedRoles.includes(req.user.role)) {
+    const userRole = (req.user.role || "").toLowerCase();
+    const roleAliases: Record<string, string[]> = {
+      candidate: ["candidate", "job_seeker", "jobseeker"],
+      recruiter: ["recruiter", "employer", "hr"],
+      admin: ["admin", "administrator"],
+    };
+
+    const isAuthorized = allowedRoles.some((role) => {
+      const normRole = (role || "").toLowerCase();
+      const aliases = roleAliases[normRole] || [normRole];
+      return aliases.includes(userRole) || normRole === userRole;
+    });
+
+    if (!isAuthorized) {
       throw new AppError(
         "You are not authorized to perform this action.",
         HTTP_STATUS.FORBIDDEN

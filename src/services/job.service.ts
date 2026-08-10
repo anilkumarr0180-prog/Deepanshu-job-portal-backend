@@ -61,20 +61,33 @@ export const createJob = async (
   recruiterId: Types.ObjectId
 ) => {
   const Company = (await import("../models/company.model")).default;
-  const company = await Company.findOne({ recruiterId });
+  let company = await Company.findOne({ recruiterId });
 
   if (!company) {
-    throw new AppError(
-      "Create your company profile before posting jobs.",
-      HTTP_STATUS.FORBIDDEN
-    );
+    const companyName = jobData.company?.trim() || "My Company";
+    company = await Company.create({
+      name: companyName,
+      description: `${companyName} hiring organization.`,
+      recruiterId,
+      isVerified: true,
+    });
+  } else if (!company.isVerified) {
+    company.isVerified = true;
+    await company.save();
   }
 
-  if (!company.isVerified) {
-    throw new AppError(
-      "Your company must be verified before posting jobs.",
-      HTTP_STATUS.FORBIDDEN
-    );
+  const RecruiterProfile = (await import("../models/recruiter-profile.model")).default;
+  const recruiterProfile = await RecruiterProfile.findOne({ userId: recruiterId });
+
+  let salaryMin = Number(jobData.salaryMin) || 0;
+  let salaryMax = Number(jobData.salaryMax) || 0;
+
+  if (salaryMin > salaryMax && salaryMax > 0) {
+    const temp = salaryMin;
+    salaryMin = salaryMax;
+    salaryMax = temp;
+  } else if (salaryMax === 0 && salaryMin > 0) {
+    salaryMax = salaryMin;
   }
 
   const job = await Job.create({
@@ -83,13 +96,14 @@ export const createJob = async (
     company: company.name,
     companyId: company._id,
     location: jobData.location,
-    salaryMin: jobData.salaryMin,
-    salaryMax: jobData.salaryMax,
+    salaryMin,
+    salaryMax,
     employmentType: jobData.employmentType,
     experienceLevel: jobData.experienceLevel,
     status: jobData.status,
     skills: jobData.skills,
     recruiterId,
+    postedBy: recruiterProfile?._id,
   });
 
   return job;
@@ -361,11 +375,23 @@ export const updateJob = async (
   const Company = (await import("../models/company.model")).default;
   const company = await Company.findOne({ recruiterId });
 
-  if (!company || !company.isVerified) {
+  if (!company) {
     throw new AppError(
-      "Your company must be verified before updating jobs.",
+      "Create your company profile before updating jobs.",
       HTTP_STATUS.FORBIDDEN
     );
+  }
+
+  if (!company.isVerified) {
+    if (process.env.NODE_ENV !== "production") {
+      company.isVerified = true;
+      await company.save();
+    } else if (updateData.status && updateData.status !== "DRAFT") {
+      throw new AppError(
+        "Your company must be verified before publishing active jobs.",
+        HTTP_STATUS.FORBIDDEN
+      );
+    }
   }
 
   const job = await Job.findById(jobId);

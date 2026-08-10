@@ -73,6 +73,27 @@ export const getJobApplications = asyncHandler(
 
 /*
 |--------------------------------------------------------------------------
+| Get All Applications For Recruiter Across All Jobs
+|--------------------------------------------------------------------------
+*/
+export const getRecruiterApplications = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const recruiterId = req.user!.userId;
+
+    const applications = await applicationService.getRecruiterApplications(
+      recruiterId,
+      req.query
+    );
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      data: applications,
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | Update Application Status
 |--------------------------------------------------------------------------
 */

@@ -149,4 +149,53 @@ export const verifyCompany = asyncHandler(
     });
   }
 );
+
+/*
+|--------------------------------------------------------------------------
+| Check SMTP Status (Admin Only)
+|--------------------------------------------------------------------------
+*/
+
+export const getSmtpStatus = asyncHandler(
+  async (_req: Request, res: Response): Promise<void> => {
+    const { verifySmtpConnection } = await import("../services/email.service");
+    const status = await verifySmtpConnection();
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: status.message,
+      data: status,
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Send Test Email (Admin Only)
+|--------------------------------------------------------------------------
+*/
+
+export const sendTestEmailController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { sendTestEmail } = await import("../services/email.service");
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        message: "Target email address is required.",
+      });
+      return;
+    }
+
+    const result = await sendTestEmail(email);
+
+    res.status(result.success ? HTTP_STATUS.OK : HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: result.success,
+      message: result.message,
+      data: result,
+    });
+  }
+);
+
 
