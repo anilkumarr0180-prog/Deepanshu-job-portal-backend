@@ -17,6 +17,8 @@ export interface IMessage extends Document {
   attachments: IMessageAttachment[];
   isRead: boolean;
   readAt?: Date;
+  isEdited: boolean;
+  deletedFor: Types.ObjectId[];
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -68,6 +70,18 @@ const messageSchema = new Schema<IMessage>(
     readAt: {
       type: Date,
     },
+
+    isEdited: {
+      type: Boolean,
+      default: false,
+    },
+
+    deletedFor: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
 
     isDeleted: {
       type: Boolean,

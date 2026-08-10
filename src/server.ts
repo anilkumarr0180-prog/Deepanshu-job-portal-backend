@@ -7,6 +7,7 @@ import app from "./app";
 import connectDB from "./config/database";
 import { env } from "./config/env";
 import { initSocketServer } from "./config/socket";
+import { initChatNotificationsJob } from "./jobs/chat-notifications.job";
 
 function freePort(port: string | number) {
   try {
@@ -26,10 +27,10 @@ function freePort(port: string | number) {
       }
 
       for (const pid of pidsToKill) {
-        console.log(`🧹 Freeing port ${port} by terminating PID ${pid}...`);
+        console.log(` Freeing port ${port} by terminating PID ${pid}...`);
         try {
           execSync(`taskkill /F /PID ${pid}`);
-        } catch {}
+        } catch { }
       }
     } else {
       execSync(`lsof -t -i:${port} | xargs kill -9 2>/dev/null || true`);
@@ -40,11 +41,11 @@ function freePort(port: string | number) {
 }
 
 process.on("uncaughtException", (error) => {
-  console.error("🔥 Uncaught Exception:", error);
+  console.error(" Uncaught Exception:", error);
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("🔥 Unhandled Rejection:", reason);
+  console.error(" Unhandled Rejection:", reason);
 });
 
 const startServer = async () => {
@@ -66,17 +67,27 @@ const startServer = async () => {
 
     const io = initSocketServer(server, allowedOrigins);
 
+    // Initialize background jobs
+    initChatNotificationsJob();
+
     let isRetrying = false;
     server.on("error", (error: any) => {
       if (error.code === "EADDRINUSE") {
         if (!isRetrying) {
           isRetrying = true;
-          console.warn(`⚠️ Port ${env.PORT} is in use. Automatically releasing port ${env.PORT}...`);
-          freePort(env.PORT);
-          setTimeout(() => {
-            server.close();
-            server.listen(env.PORT);
-          }, 800);
+          console.warn(`⚠️ Port ${env.PORT} is in use.`);
+          
+          if (process.env.NODE_ENV !== "production") {
+            console.log(`Automatically releasing port ${env.PORT}...`);
+            freePort(env.PORT);
+            setTimeout(() => {
+              server.close();
+              server.listen(env.PORT);
+            }, 800);
+          } else {
+            console.error("In production, EADDRINUSE should crash the process to allow the container orchestrator to restart it.");
+            process.exit(1);
+          }
         }
       } else {
         console.error("Server error:", error);
@@ -84,7 +95,7 @@ const startServer = async () => {
     });
 
     server.listen(env.PORT, () => {
-      console.log(`🚀 Enterprise Server running on port ${env.PORT}`);
+      console.log(` Enterprise Server running on port ${env.PORT}`);
     });
 
     const gracefulShutdown = (signal: string) => {
@@ -92,7 +103,7 @@ const startServer = async () => {
       if (io) {
         try {
           io.close();
-        } catch {}
+        } catch { }
       }
 
       if (typeof (server as any).closeAllConnections === "function") {

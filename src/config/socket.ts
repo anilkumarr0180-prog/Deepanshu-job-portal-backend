@@ -15,7 +15,12 @@ export interface AuthenticatedSocket extends Socket {
 }
 
 let io: Server | null = null;
-const onlineUsersMap = new Map<string, Set<string>>(); // userId -> Set of socketIds
+export const onlineUsersMap = new Map<string, Set<string>>(); // userId -> Set of socketIds
+
+export const isUserOnline = (userId: string): boolean => {
+  const sockets = onlineUsersMap.get(userId);
+  return !!sockets && sockets.size > 0;
+};
 
 export const initSocketServer = (
   httpServer: HttpServer,
@@ -86,9 +91,10 @@ export const initSocketServer = (
     }
     onlineUsersMap.get(userId)?.add(socket.id);
 
-    // Broadcast updated online user IDs
-    io?.emit("online_users", Array.from(onlineUsersMap.keys()));
-
+    // Broadcast updated online user IDs to all sockets and emit immediately to current socket
+    const currentOnlineList = Array.from(onlineUsersMap.keys());
+    socket.emit("online_users", currentOnlineList);
+    io?.emit("online_users", currentOnlineList);
 
     console.log(`⚡ Socket client connected: ${socket.id} (User: ${userId}, Room: ${userRoom})`);
 
@@ -205,15 +211,110 @@ export const initSocketServer = (
 
     /*
     |--------------------------------------------------------------------------
+    | Edit Message
+    |--------------------------------------------------------------------------
+    */
+    socket.on(
+      "edit_message",
+      async (data: { conversationId: string; messageId: string; newText: string }) => {
+        try {
+          const { conversationId, messageId, newText } = data;
+          if (!conversationId || !messageId || !newText || !newText.trim()) return;
+
+          const editedMessage = await chatService.editMessage(messageId, userId, newText);
+          const convRoom = `conversation_${conversationId}`;
+
+          io?.to(convRoom).emit("message_edited", {
+            message: editedMessage,
+            conversationId,
+          });
+
+          // Fetch updated conversation to notify recipient user room (to update sidebar preview)
+          const conversation = await Conversation.findById(conversationId).lean();
+          if (conversation && conversation.lastMessageId?.toString() === messageId) {
+            const recipientId =
+              conversation.candidateId.toString() === userId
+                ? conversation.recruiterId.toString()
+                : conversation.candidateId.toString();
+
+            const recipientRoom = `user_${recipientId}`;
+            io?.to(recipientRoom).emit("conversation_updated", {
+              conversationId,
+              lastMessage: editedMessage,
+              unreadTotal: await chatService.getUnreadChatCount(recipientId),
+            });
+            // Update sender's sidebar too
+            io?.to(`user_${userId}`).emit("conversation_updated", {
+              conversationId,
+              lastMessage: editedMessage,
+              unreadTotal: await chatService.getUnreadChatCount(userId),
+            });
+          }
+        } catch (err: unknown) {
+          const errorMsg = (err as Error).message || "Failed to edit message.";
+          socket.emit("error", { message: errorMsg });
+        }
+      }
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Message
+    |--------------------------------------------------------------------------
+    */
+    socket.on(
+      "delete_message",
+      async (data: { conversationId: string; messageId: string; deleteForEveryone: boolean }) => {
+        try {
+          const { conversationId, messageId, deleteForEveryone } = data;
+          if (!conversationId || !messageId) return;
+
+          const deletedMessage = await chatService.deleteMessage(messageId, userId, deleteForEveryone);
+          
+          if (deleteForEveryone) {
+            // Mask content for broadcasting
+            const maskedMessage = {
+              ...deletedMessage.toObject(),
+              message: "🚫 This message was deleted",
+              attachments: [],
+              messageType: "system",
+            };
+            
+            const convRoom = `conversation_${conversationId}`;
+            io?.to(convRoom).emit("message_deleted", {
+              message: maskedMessage,
+              conversationId,
+              deleteForEveryone,
+              deletedByUserId: userId,
+            });
+          } else {
+            // Only deleted for me, so only notify the sender's own socket
+            socket.emit("message_deleted", {
+              message: deletedMessage,
+              conversationId,
+              deleteForEveryone,
+              deletedByUserId: userId,
+            });
+          }
+        } catch (err: unknown) {
+          const errorMsg = (err as Error).message || "Failed to delete message.";
+          socket.emit("error", { message: errorMsg });
+        }
+      }
+    );
+
+    /*
+    |--------------------------------------------------------------------------
     | Typing Indicators
     |--------------------------------------------------------------------------
     */
-    socket.on("typing_start", (data: { conversationId: string }) => {
-      const { conversationId } = data;
+    socket.on("typing_start", (data: { conversationId: string; userName?: string }) => {
+      const { conversationId, userName } = data;
       if (conversationId) {
         socket.to(`conversation_${conversationId}`).emit("user_typing", {
           conversationId,
           userId,
+          userName: userName || "User",
         });
       }
     });
@@ -230,7 +331,7 @@ export const initSocketServer = (
 
     /*
     |--------------------------------------------------------------------------
-    | Mark Messages as Read
+    | Mark Messages as Read (Double Ticks Sync)
     |--------------------------------------------------------------------------
     */
     socket.on("mark_read", async (data: { conversationId: string }) => {
@@ -239,12 +340,28 @@ export const initSocketServer = (
         if (!conversationId) return;
 
         await chatService.markConversationMessagesAsRead(conversationId, userId);
+        const readAt = new Date();
 
-        io?.to(`conversation_${conversationId}`).emit("messages_read", {
+        const readPayload = {
           conversationId,
           readByUserId: userId,
-          readAt: new Date(),
-        });
+          readAt,
+        };
+
+        // Broadcast read status to active conversation room
+        io?.to(`conversation_${conversationId}`).emit("messages_read", readPayload);
+
+        // Also broadcast to individual user rooms to ensure sender updates ticks even if not in conversation room
+        const conversation = await Conversation.findById(conversationId).lean();
+        if (conversation) {
+          const candidateRoom = `user_${conversation.candidateId.toString()}`;
+          const recruiterRoom = `user_${conversation.recruiterId.toString()}`;
+          io?.to(candidateRoom).emit("messages_read", readPayload);
+          io?.to(recruiterRoom).emit("messages_read", readPayload);
+
+          const unreadTotal = await chatService.getUnreadChatCount(userId);
+          socket.emit("unread_count_updated", { unreadTotal });
+        }
       } catch (err) {
         console.error("Error in mark_read socket handler:", err);
       }

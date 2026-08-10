@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: jobs-box-backend
+    env: node
+    region: oregon # You can change this to your preferred region (e.g., frankfurt, singapore, ohio)
+    plan: free # Change to standard/pro for production use
+    rootDir: server # Since your backend is in the 'server' directory
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health # Utilizing the health check endpoint created in app.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGODB_URI
+        sync: false # Set this securely in your Render dashboard
+      - key: JWT_SECRET
+        sync: false # Set this securely in your Render dashboard
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_SECURE
+        value: false
+      - key: SMTP_USER
+        sync: false # Set this securely in your Render dashboard
+      - key: SMTP_PASS
+        sync: false # Set this securely in your Render dashboard
+      - key: ALLOWED_ORIGINS
+        value: https://deepanshu-job-portal-frontend-five.vercel.app

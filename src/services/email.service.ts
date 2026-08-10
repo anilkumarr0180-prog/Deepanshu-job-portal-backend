@@ -611,3 +611,115 @@ export const sendTestEmail = async (targetEmail: string): Promise<{ success: boo
   }
 };
 
+
+/*
+|--------------------------------------------------------------------------
+| Send Unread Chat Messages Email (Smart Offline Notification)
+|--------------------------------------------------------------------------
+*/
+export interface UnreadMessagesEmailPayload {
+  recipientName: string;
+  recipientEmail: string;
+  senderName: string;
+  jobTitle: string;
+  unreadCount: number;
+}
+
+export const sendUnreadMessagesEmail = async (
+  payload: UnreadMessagesEmailPayload
+): Promise<boolean> => {
+  const { recipientName, recipientEmail, senderName, jobTitle, unreadCount } = payload;
+  const from = getFromHeader();
+  
+  const messageWord = unreadCount === 1 ? "message" : "messages";
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>New messages from ${senderName}</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+          .header { background: linear-gradient(135deg, #3C65F5 0%, #1d4ed8 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+          .content { padding: 32px 24px; text-align: center; }
+          .greeting { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #0f172a; }
+          .icon-container { display: flex; justify-content: center; align-items: center; width: 64px; height: 64px; background: #dbeafe; border-radius: 50%; margin: 0 auto 20px auto; color: #1e40af; font-size: 24px; font-weight: bold; }
+          .message-summary { background: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 12px; margin: 24px 0; font-size: 15px; }
+          .btn { display: inline-block; width: fit-content; margin: 28px auto 0 auto; background: #3C65F5; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 10px; font-weight: 600; font-size: 14px; }
+          .footer { background: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>You have ${unreadCount} new ${messageWord}</h1>
+          </div>
+          <div class="content">
+            <div class="icon-container">
+              💬
+            </div>
+            <div class="greeting">Hi ${recipientName || "there"},</div>
+            <p style="line-height: 1.6; color: #334155; font-size: 15px;">
+              <strong>${senderName}</strong> sent you ${unreadCount} new ${messageWord} regarding the <strong>${jobTitle}</strong> position.
+            </p>
+            
+            <a href="http://localhost:5173" class="btn">View Messages &rarr;</a>
+            
+            <p style="margin-top: 24px; font-size: 13px; color: #64748b;">
+              Reply quickly to keep the conversation going!
+            </p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Inc. All rights reserved.</p>
+            <p>You received this because you have unread messages in your inbox.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    const { transporter, isTestAccount } = await getTransporter();
+    const info = await transporter.sendMail({
+      from,
+      to: recipientEmail,
+      subject: `New message from ${senderName} regarding ${jobTitle}`,
+      html,
+    });
+    console.log(`[SMTP] Unread messages email sent to ${recipientEmail}: ${info.messageId}`);
+    if (isTestAccount) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - UNREAD MESSAGES]: ${previewUrl}`);
+    }
+    return true;
+  } catch (error: any) {
+    console.warn(`[SMTP WARN] Unread messages email to (${recipientEmail}) failed: ${error?.message}. Falling back to Ethereal...`);
+    try {
+      const testAccount = await nodemailer.createTestAccount();
+      const fallbackTransporter = nodemailer.createTransport({
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: { user: testAccount.user, pass: testAccount.pass },
+      });
+      const info = await fallbackTransporter.sendMail({
+        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
+        to: recipientEmail,
+        subject: `New message from ${senderName} regarding ${jobTitle}`,
+        html,
+      });
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - UNREAD MESSAGES (FALLBACK)]: ${previewUrl}`);
+      return true;
+    } catch (fallbackErr) {
+      console.error(`[SMTP ERROR] Fallback transport also failed:`, fallbackErr);
+      return false;
+    }
+  }
+};
+
+
