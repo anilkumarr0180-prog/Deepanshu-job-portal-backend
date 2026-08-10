@@ -1,10 +1,10 @@
 import { Types } from "mongoose";
 import Conversation, { IConversation } from "../models/conversation.model";
 import Message, { IMessage, MessageType, IMessageAttachment } from "../models/message.model";
-
 import Job from "../models/job.model";
 import Application from "../models/application.model";
-import User from "../models/user.model";
+import PendingEmailNotification from "../models/pending-email.model";
+import { isUserOnline } from "../config/socket";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
 import { getPaginationOptions, buildPaginatedResult } from "../utils/pagination";
@@ -21,40 +21,51 @@ export interface PaginationQuery {
 */
 export const createOrGetConversation = async (
   jobId: string,
-  targetUserId: string,
-  currentUserId: string
+  targetUserId?: string,
+  currentUserId?: string
 ): Promise<IConversation> => {
-  const job = await Job.findById(jobId).lean();
+  if (!jobId || !Types.ObjectId.isValid(jobId)) {
+    throw new AppError("Invalid Job ID.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const jobObjId = new Types.ObjectId(jobId);
+  const job = await Job.findById(jobObjId).lean();
   if (!job) {
     throw new AppError("Job not found.", HTTP_STATUS.NOT_FOUND);
   }
 
-  const recruiterId = job.recruiterId.toString();
-  let candidateId = "";
+  const recruiterIdStr = (job.recruiterId || job.postedBy)?.toString() || "";
+  let candidateIdStr = "";
 
-  if (currentUserId === recruiterId) {
-    candidateId = targetUserId;
+  if (currentUserId === recruiterIdStr) {
+    candidateIdStr = targetUserId || "";
   } else {
-    candidateId = currentUserId;
+    candidateIdStr = currentUserId || "";
   }
 
-  if (!candidateId || !recruiterId) {
+  if (!candidateIdStr || !recruiterIdStr) {
     throw new AppError("Invalid chat participants.", HTTP_STATUS.BAD_REQUEST);
   }
 
-  if (candidateId === recruiterId) {
+  if (candidateIdStr === recruiterIdStr) {
     throw new AppError("Cannot start conversation with yourself.", HTTP_STATUS.BAD_REQUEST);
   }
 
+  if (!Types.ObjectId.isValid(candidateIdStr) || !Types.ObjectId.isValid(recruiterIdStr)) {
+    throw new AppError("Invalid participant User IDs.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const candidateObjId = new Types.ObjectId(candidateIdStr);
+  const recruiterObjId = new Types.ObjectId(recruiterIdStr);
+
   /*
   |--------------------------------------------------------------------------
-  | Mandatory Application Check
+  | Mandatory Application Check (Explicit ObjectId matching)
   |--------------------------------------------------------------------------
-  | Candidate CANNOT chat with recruiter unless an active application exists.
   */
   const application = await Application.findOne({
-    jobId,
-    applicantId: candidateId,
+    jobId: jobObjId,
+    applicantId: candidateObjId,
     isDeleted: false,
   }).lean();
 
@@ -67,21 +78,21 @@ export const createOrGetConversation = async (
 
   /*
   |--------------------------------------------------------------------------
-  | Find or Create Conversation
+  | Find or Create Conversation (Explicit ObjectId matching)
   |--------------------------------------------------------------------------
   */
   let conversation = await Conversation.findOne({
-    jobId,
-    candidateId,
-    recruiterId,
+    jobId: jobObjId,
+    candidateId: candidateObjId,
+    recruiterId: recruiterObjId,
     isDeleted: false,
   });
 
   if (!conversation) {
     conversation = await Conversation.create({
-      jobId,
-      candidateId,
-      recruiterId,
+      jobId: jobObjId,
+      candidateId: candidateObjId,
+      recruiterId: recruiterObjId,
       lastMessageAt: new Date(),
     });
   }
@@ -98,15 +109,26 @@ export const createOrGetConversation = async (
 
 /*
 |--------------------------------------------------------------------------
-| Get User Conversations
+| Get User Conversations (Explicit ObjectId + String matching)
 |--------------------------------------------------------------------------
 */
 export const getUserConversations = async (
   userId: string,
   filters: PaginationQuery = {}
 ) => {
+  if (!userId || !Types.ObjectId.isValid(userId)) {
+    return buildPaginatedResult([], 0, 1, 20);
+  }
+
+  const userObjId = new Types.ObjectId(userId);
+
   const query = {
-    $or: [{ candidateId: userId }, { recruiterId: userId }],
+    $or: [
+      { candidateId: userObjId },
+      { recruiterId: userObjId },
+      { candidateId: userId },
+      { recruiterId: userId },
+    ],
     isDeleted: false,
   };
 
@@ -130,7 +152,7 @@ export const getUserConversations = async (
     conversations.map(async (conv) => {
       const unreadCount = await Message.countDocuments({
         conversationId: conv._id,
-        senderId: { $ne: userId },
+        senderId: { $ne: userObjId },
         isRead: false,
         isDeleted: false,
       });
@@ -155,7 +177,12 @@ export const getConversationMessages = async (
   userId: string,
   filters: PaginationQuery = {}
 ) => {
-  const conversation = await Conversation.findById(conversationId).lean();
+  if (!conversationId || !Types.ObjectId.isValid(conversationId)) {
+    throw new AppError("Conversation not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  const convObjId = new Types.ObjectId(conversationId);
+  const conversation = await Conversation.findById(convObjId).lean();
   if (!conversation || conversation.isDeleted) {
     throw new AppError("Conversation not found.", HTTP_STATUS.NOT_FOUND);
   }
@@ -167,7 +194,11 @@ export const getConversationMessages = async (
     throw new AppError("You are not authorized to view this conversation.", HTTP_STATUS.FORBIDDEN);
   }
 
-  const query = { conversationId, isDeleted: false };
+  const userObjId = new Types.ObjectId(userId);
+  const query = { 
+    conversationId: convObjId, 
+    deletedFor: { $ne: userObjId } // Exclude messages the user has deleted for themselves
+  };
   const { page, limit, skip } = getPaginationOptions(filters);
 
   const [messages, totalItems] = await Promise.all([
@@ -181,7 +212,18 @@ export const getConversationMessages = async (
   ]);
 
   // Reverse so frontend gets chronological order (oldest to newest in page)
-  const chronologicalMessages = messages.reverse();
+  const chronologicalMessages = messages.reverse().map(msg => {
+    // If the message was deleted for everyone, mask its content
+    if (msg.isDeleted) {
+      return {
+        ...msg,
+        message: "🚫 This message was deleted",
+        attachments: [],
+        messageType: "system" as MessageType,
+      };
+    }
+    return msg;
+  });
 
   return buildPaginatedResult(chronologicalMessages, totalItems, page, limit);
 };
@@ -206,7 +248,14 @@ export const createMessage = async (
     throw new AppError("Message content exceeds limit of 5000 characters.", HTTP_STATUS.BAD_REQUEST);
   }
 
-  const conversation = await Conversation.findById(conversationId);
+  if (!conversationId || !Types.ObjectId.isValid(conversationId)) {
+    throw new AppError("Conversation not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  const convObjId = new Types.ObjectId(conversationId);
+  const senderObjId = new Types.ObjectId(senderId);
+
+  const conversation = await Conversation.findById(convObjId);
   if (!conversation || conversation.isDeleted) {
     throw new AppError("Conversation not found.", HTTP_STATUS.NOT_FOUND);
   }
@@ -219,8 +268,8 @@ export const createMessage = async (
   }
 
   const message = await Message.create({
-    conversationId,
-    senderId,
+    conversationId: convObjId,
+    senderId: senderObjId,
     message: messageText.trim(),
     messageType,
     attachments,
@@ -235,6 +284,29 @@ export const createMessage = async (
     .populate({ path: "senderId", select: "name email role profilePicture" })
     .exec();
 
+  // Handle Offline Notifications Debouncing
+  const recipientIdStr = isCandidate ? conversation.recruiterId.toString() : conversation.candidateId.toString();
+  if (!isUserOnline(recipientIdStr)) {
+    // Check if there is already a pending notification in the debounce window
+    const existingPending = await PendingEmailNotification.findOne({
+      recipientId: new Types.ObjectId(recipientIdStr),
+      conversationId: convObjId,
+    });
+
+    if (!existingPending) {
+      // 15-minute debounce window
+      const sendAt = new Date(Date.now() + 15 * 60 * 1000);
+      await PendingEmailNotification.create({
+        recipientId: new Types.ObjectId(recipientIdStr),
+        conversationId: convObjId,
+        senderId: senderObjId,
+        jobId: conversation.jobId,
+        sendAt,
+      });
+      console.log(`[Notification] Scheduled email notification for offline user ${recipientIdStr} in 15 mins.`);
+    }
+  }
+
   return populatedMessage as IMessage;
 };
 
@@ -247,22 +319,17 @@ export const markConversationMessagesAsRead = async (
   conversationId: string,
   userId: string
 ): Promise<{ updatedCount: number }> => {
-  const conversation = await Conversation.findById(conversationId).lean();
-  if (!conversation || conversation.isDeleted) {
-    throw new AppError("Conversation not found.", HTTP_STATUS.NOT_FOUND);
+  if (!conversationId || !Types.ObjectId.isValid(conversationId)) {
+    return { updatedCount: 0 };
   }
 
-  const isCandidate = conversation.candidateId.toString() === userId;
-  const isRecruiter = conversation.recruiterId.toString() === userId;
-
-  if (!isCandidate && !isRecruiter) {
-    throw new AppError("Not authorized.", HTTP_STATUS.FORBIDDEN);
-  }
+  const convObjId = new Types.ObjectId(conversationId);
+  const userObjId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId;
 
   const result = await Message.updateMany(
     {
-      conversationId,
-      senderId: { $ne: userId },
+      conversationId: convObjId,
+      senderId: { $ne: userObjId },
       isRead: false,
     },
     {
@@ -282,7 +349,12 @@ export const markMessageAsRead = async (
   messageId: string,
   userId: string
 ): Promise<IMessage> => {
-  const message = await Message.findById(messageId);
+  if (!messageId || !Types.ObjectId.isValid(messageId)) {
+    throw new AppError("Message not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  const msgObjId = new Types.ObjectId(messageId);
+  const message = await Message.findById(msgObjId);
   if (!message || message.isDeleted) {
     throw new AppError("Message not found.", HTTP_STATUS.NOT_FOUND);
   }
@@ -309,12 +381,107 @@ export const markMessageAsRead = async (
 
 /*
 |--------------------------------------------------------------------------
+| Edit Message
+|--------------------------------------------------------------------------
+*/
+export const editMessage = async (
+  messageId: string,
+  userId: string,
+  newText: string
+): Promise<IMessage> => {
+  if (!messageId || !Types.ObjectId.isValid(messageId)) {
+    throw new AppError("Message not found.", HTTP_STATUS.NOT_FOUND);
+  }
+  if (!newText || !newText.trim()) {
+    throw new AppError("Message content cannot be empty.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const msgObjId = new Types.ObjectId(messageId);
+  const message = await Message.findById(msgObjId);
+
+  if (!message || message.isDeleted) {
+    throw new AppError("Message not found or deleted.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  if (message.senderId.toString() !== userId) {
+    throw new AppError("You can only edit your own messages.", HTTP_STATUS.FORBIDDEN);
+  }
+
+  message.message = newText.trim();
+  message.isEdited = true;
+  await message.save();
+
+  const populatedMessage = await Message.findById(message._id)
+    .populate({ path: "senderId", select: "name email role profilePicture" })
+    .exec();
+
+  return populatedMessage as IMessage;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Delete Message
+|--------------------------------------------------------------------------
+*/
+export const deleteMessage = async (
+  messageId: string,
+  userId: string,
+  deleteForEveryone: boolean
+): Promise<IMessage> => {
+  if (!messageId || !Types.ObjectId.isValid(messageId)) {
+    throw new AppError("Message not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  const msgObjId = new Types.ObjectId(messageId);
+  const message = await Message.findById(msgObjId);
+
+  if (!message) {
+    throw new AppError("Message not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  const userObjId = new Types.ObjectId(userId);
+
+  if (deleteForEveryone) {
+    // Only sender can delete for everyone
+    if (message.senderId.toString() !== userId) {
+      throw new AppError("You can only delete your own messages for everyone.", HTTP_STATUS.FORBIDDEN);
+    }
+    message.isDeleted = true;
+  } else {
+    // Delete for me
+    if (!message.deletedFor.includes(userObjId)) {
+      message.deletedFor.push(userObjId);
+    }
+  }
+
+  await message.save();
+
+  const populatedMessage = await Message.findById(message._id)
+    .populate({ path: "senderId", select: "name email role profilePicture" })
+    .exec();
+
+  return populatedMessage as IMessage;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Get Total Unread Count for User
 |--------------------------------------------------------------------------
 */
 export const getUnreadChatCount = async (userId: string): Promise<number> => {
+  if (!userId || !Types.ObjectId.isValid(userId)) {
+    return 0;
+  }
+
+  const userObjId = new Types.ObjectId(userId);
+
   const conversations = await Conversation.find({
-    $or: [{ candidateId: userId }, { recruiterId: userId }],
+    $or: [
+      { candidateId: userObjId },
+      { recruiterId: userObjId },
+      { candidateId: userId },
+      { recruiterId: userId },
+    ],
     isDeleted: false,
   })
     .select("_id")
@@ -326,7 +493,7 @@ export const getUnreadChatCount = async (userId: string): Promise<number> => {
 
   const unreadCount = await Message.countDocuments({
     conversationId: { $in: conversationIds },
-    senderId: { $ne: userId },
+    senderId: { $ne: userObjId },
     isRead: false,
     isDeleted: false,
   });
