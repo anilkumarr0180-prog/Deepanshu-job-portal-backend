@@ -35,6 +35,7 @@ export interface IJob extends Document {
   recruiterId: Types.ObjectId;
   publishedAt?: Date;
   expiresAt?: Date;
+  isFeatured?: boolean;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -163,6 +164,12 @@ const jobSchema = new Schema<IJob>(
       type: Date,
     },
 
+    isFeatured: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     isDeleted: {
       type: Boolean,
       default: false,
@@ -178,6 +185,7 @@ const jobSchema = new Schema<IJob>(
 
 // Compound indexes for searching, filtering, and listing
 jobSchema.index({ status: 1, isDeleted: 1, createdAt: -1 });
+jobSchema.index({ isFeatured: -1, status: 1, isDeleted: 1, createdAt: -1 });
 jobSchema.index({ recruiterId: 1, status: 1, isDeleted: 1, createdAt: -1 });
 jobSchema.index({ status: 1, isDeleted: 1, employmentType: 1, experienceLevel: 1 });
 jobSchema.index({ companyId: 1, status: 1, isDeleted: 1 });

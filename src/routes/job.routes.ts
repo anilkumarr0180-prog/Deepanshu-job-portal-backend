@@ -21,6 +21,7 @@ import {
 } from "../validations/job.validations";
 
 import { USER_ROLES } from "../constants/roles";
+import { checkSubscriptionJobLimit } from "../middleware/subscription-quota.middleware";
 
 const router = Router();
 
@@ -83,6 +84,7 @@ router.post(
   "/",
   authMiddleware,
   authorize(USER_ROLES.RECRUITER),
+  checkSubscriptionJobLimit,
   validate(createJobSchema),
   createJob
 );

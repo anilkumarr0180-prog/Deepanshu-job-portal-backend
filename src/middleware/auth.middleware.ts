@@ -3,6 +3,15 @@ import { JsonWebTokenError, TokenExpiredError, NotBeforeError } from "jsonwebtok
 import { verifyAccessToken } from "../utils/jwt";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
+import { UserRole } from "../constants/roles";
+
+export interface AuthRequest extends Request {
+  user?: {
+    userId: string;
+    id?: string;
+    role: UserRole;
+  };
+}
 
 export const authMiddleware = (
   req: Request,

@@ -244,30 +244,35 @@ export const getJobs = async (
   */
 
   let sortOptions: Record<string, 1 | -1> = {
+    isFeatured: -1,
     createdAt: -1,
   };
 
   switch (filters.sort) {
     case "oldest":
       sortOptions = {
+        isFeatured: -1,
         createdAt: 1,
       };
       break;
 
     case "salary-high":
       sortOptions = {
+        isFeatured: -1,
         salaryMax: -1,
       };
       break;
 
     case "salary-low":
       sortOptions = {
+        isFeatured: -1,
         salaryMin: 1,
       };
       break;
 
     default:
       sortOptions = {
+        isFeatured: -1,
         createdAt: -1,
       };
   }
