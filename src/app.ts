@@ -1,5 +1,9 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import mongoose from "mongoose";
+
+import { generalRateLimiter } from "./config/rate-limit";
 
 import authRoutes from "./routes/auth.routes";
 import jobRoutes from "./routes/job.routes";
@@ -13,7 +17,7 @@ import notificationRoutes from "./routes/notification.routes";
 import chatRoutes from "./routes/chat.routes";
 import locationRoutes from "./routes/location.routes";
 import subscriptionRoutes from "./routes/subscription.routes";
-
+import uploadRoutes from "./routes/upload.routes";
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -24,12 +28,18 @@ const app = express();
 |--------------------------------------------------------------------------
 | Allowed Origins
 |--------------------------------------------------------------------------
+| Single source of truth — server.ts reads from this same array for Socket.io.
+| Add new origins via the ALLOWED_ORIGINS env var (comma-separated).
+|--------------------------------------------------------------------------
 */
 
-const allowedOrigins = [
+export const allowedOrigins = [
   "https://deepanshu-job-portal-frontend-five.vercel.app",
   "http://localhost:5173",
   "http://localhost:5174",
+  ...(process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+    : []),
 ];
 
 /*
@@ -38,22 +48,19 @@ const allowedOrigins = [
 |--------------------------------------------------------------------------
 */
 
+// Security headers — sets X-Frame-Options, X-XSS-Protection, CSP, etc.
+app.use(helmet());
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-
-      const customOrigins = process.env.ALLOWED_ORIGINS
-        ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
-        : [];
-
-      const allAllowedOrigins = [...allowedOrigins, ...customOrigins];
-
-      if (allAllowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
+      // Allow server-to-server requests (no Origin header)
+      // and whitelisted origins.
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
       }
+
+      callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -61,13 +68,18 @@ app.use(
   })
 );
 
-app.use(express.json());
+// Cap JSON body size to prevent payload-based memory exhaustion attacks.
+app.use(express.json({ limit: "10kb" }));
 
-import mongoose from "mongoose";
+// Global rate limiter — applies to all routes as a baseline.
+// Auth routes apply their own stricter limiter on top of this.
+app.use(generalRateLimiter);
 
 /*
 |--------------------------------------------------------------------------
-| Root Service Metadata & Health Check (Production Best Practice)
+| Root Service Metadata & Health Check
+|--------------------------------------------------------------------------
+| Production best practice.
 |--------------------------------------------------------------------------
 */
 
@@ -96,7 +108,9 @@ app.get("/health", (_req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| Request Logger (Temporary)
+| Request Logger
+|--------------------------------------------------------------------------
+| Development only.
 |--------------------------------------------------------------------------
 */
 
@@ -106,7 +120,6 @@ if (process.env.NODE_ENV === "development") {
     next();
   });
 }
-
 
 /*
 |--------------------------------------------------------------------------
@@ -133,15 +146,14 @@ app.use("/api/saved-jobs", savedJobRoutes);
 app.use("/api/notifications", notificationRoutes);
 
 app.use("/api/chat", chatRoutes);
-app.use("/api/v1/chat", chatRoutes);
 
 app.use("/api/location", locationRoutes);
 
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/v1/subscriptions", subscriptionRoutes);
 
-
-
+// Cloudinary upload/signature routes
+app.use("/api/uploads", uploadRoutes);
 
 /*
 |--------------------------------------------------------------------------

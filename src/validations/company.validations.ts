@@ -31,6 +31,7 @@ export const createCompanySchema = z.object({
       .min(10, "Description must be at least 10 characters."),
 
     logo: urlSchema,
+    logoPublicId: z.string().trim().optional(),
     website: urlSchema,
     industry: z.string().trim().optional(),
     companySize: z.string().trim().optional(),
@@ -85,6 +86,7 @@ export const updateCompanySchema = z.object({
       .optional(),
 
     logo: urlSchema,
+    logoPublicId: z.string().trim().optional(),
     website: urlSchema,
     industry: z.string().trim().optional(),
     companySize: z.string().trim().optional(),

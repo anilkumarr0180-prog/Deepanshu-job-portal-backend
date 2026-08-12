@@ -27,6 +27,15 @@ import {
 
 interface ApplyJobInput {
   coverLetter?: string;
+  applicantName?: string;
+  applicantPhone?: string;
+  applicantDesignation?: string;
+  experienceYears?: number;
+  relevantSkills?: string[];
+  noticePeriod?: string;
+  resumeUrl?: string;
+  resumePublicId?: string;
+  resumeFileName?: string;
 }
 
 interface ApplicationFilters {
@@ -145,14 +154,16 @@ export const applyForJob = async (
   const candidateProfile = await CandidateProfile.findOne({
     userId: applicantId,
   })
-    .select("resumeUrl")
+    .select("phone headline skills resumeUrl resumePublicId resumeFileName")
     .lean();
 
-  const activeResumeUrl = candidateProfile?.resumeUrl || candidate.resumeUrl;
+  const activeResumeUrl = applicationData.resumeUrl || candidateProfile?.resumeUrl || candidate.resumeUrl;
+  const activeResumePublicId = applicationData.resumePublicId || candidateProfile?.resumePublicId;
+  const activeResumeFileName = applicationData.resumeFileName || candidateProfile?.resumeFileName || "Resume.pdf";
 
   if (!activeResumeUrl) {
     throw new AppError(
-      "Please upload your resume before applying.",
+      "Please select or upload a resume before applying.",
       HTTP_STATUS.BAD_REQUEST
     );
   }
@@ -181,7 +192,16 @@ export const applyForJob = async (
     jobId,
     applicantId,
     candidateProfileId: candidateProfile?._id,
+    applicantName: applicationData.applicantName || candidate.name,
+    applicantEmail: candidate.email,
+    applicantPhone: applicationData.applicantPhone || candidateProfile?.phone || (candidate as any).phone || "",
+    applicantDesignation: applicationData.applicantDesignation || candidateProfile?.headline || "",
+    experienceYears: typeof applicationData.experienceYears === "number" ? applicationData.experienceYears : 0,
+    relevantSkills: applicationData.relevantSkills || candidateProfile?.skills || [],
+    noticePeriod: applicationData.noticePeriod || "",
     resume: activeResumeUrl,
+    resumePublicId: activeResumePublicId,
+    resumeFileName: activeResumeFileName,
     coverLetter: applicationData.coverLetter,
     status: APPLICATION_STATUS.APPLIED,
   });
@@ -496,7 +516,8 @@ export const getRecruiterApplications = async (
 export const updateApplicationStatus = async (
   applicationId: string,
   recruiterId: string,
-  status: string
+  status: string,
+  interviewDetails?: any
 ) => {
   /*
   |--------------------------------------------------------------------------
@@ -572,11 +593,14 @@ export const updateApplicationStatus = async (
 
   /*
   |--------------------------------------------------------------------------
-  | Update Status
+  | Update Status & Interview Details
   |--------------------------------------------------------------------------
   */
 
   application.status = targetStatus as ApplicationStatus;
+  if (interviewDetails) {
+    application.interviewDetails = interviewDetails;
+  }
 
   await application.save();
 
@@ -595,8 +619,14 @@ export const updateApplicationStatus = async (
           notifBody = `Great news! Your application for "${job.title}" has been shortlisted.`;
           break;
         case APPLICATION_STATUS.INTERVIEW:
-          notifTitle = "Interview Invitation 📅";
-          notifBody = `A recruiter scheduled an interview for your application to "${job.title}".`;
+          notifTitle = "Interview Scheduled 📅";
+          const modeLabel = interviewDetails?.mode === "in-person"
+            ? "In-Person On-Site"
+            : interviewDetails?.mode === "phone"
+            ? "Phone Call"
+            : "Video Call";
+          const whenStr = interviewDetails?.date ? ` on ${interviewDetails.date} at ${interviewDetails.time || ""}` : "";
+          notifBody = `An interview (${modeLabel}) was scheduled for "${job.title}"${whenStr}.`;
           break;
         case APPLICATION_STATUS.HIRED:
           notifTitle = "Job Offer Received 🎉";

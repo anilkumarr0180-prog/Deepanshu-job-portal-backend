@@ -12,6 +12,7 @@ export interface IRecruiterProfile extends Document {
   department?: string;
   phone?: string;
   profilePicture?: string;
+  profilePicturePublicId?: string;
   companyId?: Types.ObjectId;
   bio?: string;
   socialLinks?: IRecruiterSocialLinks;
@@ -42,6 +43,10 @@ const recruiterProfileSchema = new Schema<IRecruiterProfile>(
       trim: true,
     },
     profilePicture: {
+      type: String,
+      trim: true,
+    },
+    profilePicturePublicId: {
       type: String,
       trim: true,
     },

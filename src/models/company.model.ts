@@ -9,7 +9,11 @@ export interface ISocialLinks {
 
 export interface ICompany extends Document {
   name: string;
+
+  // Cloudinary company logo
   logo?: string;
+  logoPublicId?: string;
+
   website?: string;
   industry?: string;
   companySize?: string;
@@ -21,10 +25,14 @@ export interface ICompany extends Document {
   city?: string;
   state?: string;
   country?: string;
+
   recruiterId: Types.ObjectId;
+
   socialLinks?: ISocialLinks;
+
   isVerified: boolean;
   isDeleted: boolean;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -36,73 +44,116 @@ const companySchema = new Schema<ICompany>(
       required: true,
       trim: true,
     },
+
+    // -----------------------------------------------------------------------
+    // Company Logo
+    // -----------------------------------------------------------------------
+
     logo: {
       type: String,
       trim: true,
     },
+
+    logoPublicId: {
+      type: String,
+      trim: true,
+    },
+
     website: {
       type: String,
       trim: true,
     },
+
     industry: {
       type: String,
       trim: true,
     },
+
     companySize: {
       type: String,
       trim: true,
     },
+
     foundedYear: {
       type: Number,
       min: [1800, "Founded year must be 1800 or later"],
-      max: [new Date().getFullYear(), "Founded year cannot be in the future"],
+      max: [
+        new Date().getFullYear(),
+        "Founded year cannot be in the future",
+      ],
     },
+
     description: {
       type: String,
       required: true,
       trim: true,
     },
+
     email: {
       type: String,
       lowercase: true,
       trim: true,
     },
+
     phone: {
       type: String,
       trim: true,
     },
+
     address: {
       type: String,
       trim: true,
     },
+
     city: {
       type: String,
       trim: true,
     },
+
     state: {
       type: String,
       trim: true,
     },
+
     country: {
       type: String,
       trim: true,
     },
+
     recruiterId: {
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
       index: true,
     },
+
     socialLinks: {
-      linkedin: { type: String, trim: true },
-      twitter: { type: String, trim: true },
-      github: { type: String, trim: true },
-      website: { type: String, trim: true },
+      linkedin: {
+        type: String,
+        trim: true,
+      },
+
+      twitter: {
+        type: String,
+        trim: true,
+      },
+
+      github: {
+        type: String,
+        trim: true,
+      },
+
+      website: {
+        type: String,
+        trim: true,
+      },
     },
+
     isVerified: {
       type: Boolean,
       default: false,
     },
+
     isDeleted: {
       type: Boolean,
       default: false,
@@ -114,8 +165,15 @@ const companySchema = new Schema<ICompany>(
   }
 );
 
-companySchema.index({ name: "text", industry: "text" });
-companySchema.index({ isVerified: 1, isDeleted: 1 });
+companySchema.index({
+  name: "text",
+  industry: "text",
+});
+
+companySchema.index({
+  isVerified: 1,
+  isDeleted: 1,
+});
 
 const Company = model<ICompany>("Company", companySchema);
 

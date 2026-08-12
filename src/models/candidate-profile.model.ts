@@ -32,7 +32,11 @@ export interface ICandidateProfile extends Document {
   bio?: string;
   phone?: string;
   profilePicture?: string;
+  profilePicturePublicId?: string;
   resumeUrl?: string;
+  resumePublicId?: string;
+  resumeFileName?: string;
+  resumeUploadedAt?: Date;
   skills: string[];
   experience: ICandidateExperience[];
   education: ICandidateEducation[];
@@ -70,9 +74,24 @@ const candidateProfileSchema = new Schema<ICandidateProfile>(
       type: String,
       trim: true,
     },
+    profilePicturePublicId: {
+      type: String,
+      trim: true,
+    },
     resumeUrl: {
       type: String,
       trim: true,
+    },
+    resumePublicId: {
+      type: String,
+      trim: true,
+    },
+    resumeFileName: {
+      type: String,
+      trim: true,
+    },
+    resumeUploadedAt: {
+      type: Date,
     },
     skills: [
       {

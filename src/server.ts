@@ -3,7 +3,7 @@ dotenv.config();
 
 import http from "http";
 import { execSync } from "child_process";
-import app from "./app";
+import app, { allowedOrigins } from "./app";
 import connectDB from "./config/database";
 import { env } from "./config/env";
 import { initSocketServer } from "./config/socket";
@@ -41,11 +41,16 @@ function freePort(port: string | number) {
 }
 
 process.on("uncaughtException", (error) => {
+  // After an uncaughtException the Node process is in an undefined state.
+  // Log it and exit immediately so the process manager can restart cleanly.
   console.error(" Uncaught Exception:", error);
+  process.exit(1);
 });
 
 process.on("unhandledRejection", (reason) => {
+  // Same rationale — don't silently continue after an unhandled promise rejection.
   console.error(" Unhandled Rejection:", reason);
+  process.exit(1);
 });
 
 const startServer = async () => {
@@ -54,17 +59,8 @@ const startServer = async () => {
 
     const server = http.createServer(app);
 
-    const allowedOrigins = [
-      "https://deepanshu-job-portal-frontend-five.vercel.app",
-      "http://localhost:5173",
-      "http://localhost:5174",
-    ];
-    if (process.env.ALLOWED_ORIGINS) {
-      allowedOrigins.push(
-        ...process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
-      );
-    }
-
+    // allowedOrigins is imported from app.ts — single source of truth.
+    // Both HTTP CORS and Socket.io use the exact same list.
     const io = initSocketServer(server, allowedOrigins);
 
     // Initialize background jobs
@@ -124,7 +120,10 @@ const startServer = async () => {
     process.once("SIGINT", () => gracefulShutdown("SIGINT"));
     process.once("SIGUSR2", () => gracefulShutdown("SIGUSR2"));
   } catch (error) {
+    // Fatal startup failure (e.g. DB unreachable). Exit so the process manager
+    // knows to restart — don't silently run with no server listening.
     console.error("Failed to start server:", error);
+    process.exit(1);
   }
 };
 

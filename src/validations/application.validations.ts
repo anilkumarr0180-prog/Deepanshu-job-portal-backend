@@ -11,10 +11,16 @@ export const applyJobSchema = z.object({
   }),
 
   body: z.object({
-    coverLetter: z
-      .string()
-      .trim()
-      .optional(),
+    coverLetter: z.string().trim().optional(),
+    applicantName: z.string().trim().optional(),
+    applicantPhone: z.string().trim().optional(),
+    applicantDesignation: z.string().trim().optional(),
+    experienceYears: z.number().optional(),
+    relevantSkills: z.array(z.string().trim()).optional(),
+    noticePeriod: z.string().trim().optional(),
+    resumeUrl: z.string().trim().optional(),
+    resumePublicId: z.string().trim().optional(),
+    resumeFileName: z.string().trim().optional(),
   }),
 });
 
@@ -57,6 +63,16 @@ export const updateApplicationStatusSchema = z.object({
       "rejected",
       "hired",
     ]),
+    interviewDetails: z
+      .object({
+        mode: z.enum(["video", "in-person", "phone"]).optional(),
+        date: z.string().optional(),
+        time: z.string().optional(),
+        type: z.string().optional(),
+        locationOrLink: z.string().optional(),
+        notes: z.string().optional(),
+      })
+      .optional(),
   }),
 });
 
