@@ -1,7 +1,7 @@
 import { Schema, model, Document } from "mongoose";
 
 export interface ISubscriptionPlan extends Document {
-  code: string; // 'candidate_free' | 'candidate_premium' | 'recruiter_free' | 'recruiter_lite' | 'recruiter_enterprise'
+  code: string; // 'candidate_free' | 'candidate_pro' | 'candidate_premium' | 'recruiter_free' | 'recruiter_lite' | 'recruiter_enterprise'
   name: string;
   description: string;
   targetRole: "candidate" | "recruiter";
@@ -16,7 +16,10 @@ export interface ISubscriptionPlan extends Document {
     prioritySupport?: boolean;
     analyticsLevel?: "basic" | "advanced" | "enterprise";
     candidateSearchAccess?: boolean;
+    savedJobsLimit?: number;
   };
+  provider: "internal" | "stripe" | "razorpay";
+  providerPlanId?: string;
   isActive: boolean;
   isPopular?: boolean;
   createdAt: Date;
@@ -54,7 +57,7 @@ const subscriptionPlanSchema = new Schema<ISubscriptionPlan>(
     },
     currency: {
       type: String,
-      default: "USD",
+      default: "INR",
       trim: true,
     },
     billingPeriod: {
@@ -70,6 +73,16 @@ const subscriptionPlanSchema = new Schema<ISubscriptionPlan>(
       prioritySupport: { type: Boolean, default: false },
       analyticsLevel: { type: String, enum: ["basic", "advanced", "enterprise"], default: "basic" },
       candidateSearchAccess: { type: Boolean, default: false },
+      savedJobsLimit: { type: Number, default: 5 },
+    },
+    provider: {
+      type: String,
+      enum: ["internal", "stripe", "razorpay"],
+      default: "razorpay",
+    },
+    providerPlanId: {
+      type: String,
+      sparse: true,
     },
     isActive: {
       type: Boolean,

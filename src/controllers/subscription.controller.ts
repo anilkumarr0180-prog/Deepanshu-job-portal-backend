@@ -1,13 +1,15 @@
-import { Request, Response } from "express";
+﻿import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import {
   getSubscriptionPlans,
   getUserSubscriptionDetails,
   processCheckoutSession,
   cancelUserSubscription,
+  reactivateUserSubscription,
   getUserTransactionsHistory,
   validateCouponCode,
   boostJobToFeatured,
+  handleRazorpayWebhookEvent,
 } from "../services/subscription.service";
 import { generateInvoiceDetails, generateInvoiceHTML } from "../services/invoice.service";
 
@@ -112,14 +114,15 @@ export async function verifyRazorpayPaymentController(req: AuthRequest, res: Res
       return;
     }
 
-    const { orderId, paymentId, signature, planCode, couponCode } = req.body;
+    const { orderId, paymentId, signature, planCode, couponCode, subscriptionId } = req.body;
     const result = await (await import("../services/subscription.service")).verifyRazorpayPaymentService(
       userId,
       orderId,
       paymentId,
       signature,
       planCode,
-      couponCode
+      couponCode,
+      subscriptionId
     );
 
     res.status(200).json({
@@ -146,7 +149,7 @@ export async function validateCouponController(req: Request, res: Response): Pro
     const coupon = await validateCouponCode(code);
     res.status(200).json({
       success: true,
-      message: `Promo code ${coupon.code} applied! (${coupon.discountValue}${coupon.discountType === "percentage" ? "%" : "$"} OFF)`,
+      message: `Promo code ${coupon.code} applied! (${coupon.discountValue}${coupon.discountType === "percentage" ? "%" : "?"} OFF)`,
       data: coupon,
     });
   } catch (error: any) {
@@ -220,6 +223,28 @@ export async function cancelSubscriptionController(req: AuthRequest, res: Respon
   }
 }
 
+export async function reactivateSubscriptionController(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "Unauthorized" });
+      return;
+    }
+
+    const sub = await reactivateUserSubscription(userId);
+    res.status(200).json({
+      success: true,
+      message: "Auto-pay re-enabled! Your subscription will automatically renew at period end.",
+      data: sub,
+    });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      message: error.message || "Failed to reactivate subscription auto-pay",
+    });
+  }
+}
+
 export async function getTransactionsController(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.user?.userId || req.user?.id;
@@ -243,10 +268,14 @@ export async function getTransactionsController(req: AuthRequest, res: Response)
 
 export async function webhookController(req: Request, res: Response): Promise<void> {
   try {
-    const event = req.body;
-    console.log("Received payment gateway webhook event:", event?.type || "unknown");
-    res.status(200).json({ received: true });
+    const signature = (req.headers["x-razorpay-signature"] as string) || "";
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+    const eventData = req.body;
+
+    const result = await handleRazorpayWebhookEvent(rawBody, signature, eventData);
+    res.status(200).json(result);
   } catch (error: any) {
-    res.status(400).json({ success: false, message: "Webhook handler error" });
+    console.error("Razorpay Webhook processing error:", error.message);
+    res.status(400).json({ success: false, message: error.message || "Webhook processing failed" });
   }
 }

@@ -1,4 +1,4 @@
-import type { StringValue } from "ms";
+﻿import type { StringValue } from "ms";
 
 /*
 |--------------------------------------------------------------------------
@@ -26,6 +26,15 @@ const {
   CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET,
+
+  // Razorpay
+  RAZORPAY_KEY_ID,
+  RAZORPAY_KEY_SECRET,
+  RAZORPAY_WEBHOOK_SECRET,
+  RAZORPAY_PLAN_RECRUITER_LITE,
+  RAZORPAY_PLAN_RECRUITER_ENTERPRISE,
+  RAZORPAY_PLAN_CANDIDATE_PRO,
+  RAZORPAY_PLAN_CANDIDATE_PREMIUM,
 } = process.env;
 
 // ---------------------------------------------------------------------------
@@ -50,6 +59,14 @@ if (!CLOUDINARY_API_KEY) {
 
 if (!CLOUDINARY_API_SECRET) {
   throw new Error("CLOUDINARY_API_SECRET is not defined.");
+}
+
+if (!RAZORPAY_KEY_ID) {
+  throw new Error("RAZORPAY_KEY_ID is not defined.");
+}
+
+if (!RAZORPAY_KEY_SECRET) {
+  throw new Error("RAZORPAY_KEY_SECRET is not defined.");
 }
 
 // ---------------------------------------------------------------------------
@@ -85,4 +102,13 @@ export const env = {
   CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET,
+
+  // Razorpay
+  RAZORPAY_KEY_ID: (RAZORPAY_KEY_ID || "").trim(),
+  RAZORPAY_KEY_SECRET: (RAZORPAY_KEY_SECRET || "").trim(),
+  RAZORPAY_WEBHOOK_SECRET: (RAZORPAY_WEBHOOK_SECRET || "").trim(),
+  RAZORPAY_PLAN_RECRUITER_LITE: (RAZORPAY_PLAN_RECRUITER_LITE || "plan_TPa2Xb7jpp0YDp").trim(),
+    RAZORPAY_PLAN_RECRUITER_ENTERPRISE: (RAZORPAY_PLAN_RECRUITER_ENTERPRISE || "plan_TPYTyC7GecJmdC").trim(),
+  RAZORPAY_PLAN_CANDIDATE_PRO: (process.env.RAZORPAY_PLAN_CANDIDATE_PRO || "plan_TPc0Up5ZDc7IGE").trim(),
+  RAZORPAY_PLAN_CANDIDATE_PREMIUM: (process.env.RAZORPAY_PLAN_CANDIDATE_PREMIUM || "plan_TPc3dSn8XUWR2j").trim(),
 };

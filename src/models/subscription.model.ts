@@ -3,12 +3,12 @@ import { Schema, model, Document, Types } from "mongoose";
 export interface ISubscription extends Document {
   userId: Types.ObjectId;
   planId: Types.ObjectId;
-  planCode: string;
+  planCode: string; // Alias snapshot for planCodeSnapshot
   status: "active" | "canceled" | "past_due" | "expired";
   currentPeriodStart: Date;
   currentPeriodEnd: Date;
   cancelAtPeriodEnd: boolean;
-  provider: "mock" | "stripe" | "razorpay";
+  provider: "internal" | "stripe" | "razorpay" | "mock";
   providerSubscriptionId?: string;
   providerCustomerId?: string;
   usages: {
@@ -59,12 +59,13 @@ const subscriptionSchema = new Schema<ISubscription>(
     },
     provider: {
       type: String,
-      enum: ["mock", "stripe", "razorpay"],
-      default: "mock",
+      enum: ["internal", "stripe", "razorpay", "mock"],
+      default: "internal",
     },
     providerSubscriptionId: {
       type: String,
       sparse: true,
+      index: true,
     },
     providerCustomerId: {
       type: String,
