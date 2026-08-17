@@ -373,8 +373,12 @@ export const initSocketServer = (
     |--------------------------------------------------------------------------
     */
     socket.on("disconnect", (reason) => {
-      // Differentiate normal client lifecycle (navigating/closing tab) from network issues
-      const isExpectedClosure = reason === "transport close" || reason === "client namespace disconnect";
+      // Differentiate normal client lifecycle (navigating/closing tab/polling abort) from unexpected server issues
+      const isExpectedClosure =
+        reason === "transport close" ||
+        reason === "client namespace disconnect" ||
+        reason === "transport error" ||
+        reason === "ping timeout";
       if (process.env.NODE_ENV === "development" || !isExpectedClosure) {
         console.log(`🔌 Socket client disconnected: ${socket.id} (${reason})`);
       }

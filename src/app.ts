@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import mongoose from "mongoose";
@@ -23,6 +23,9 @@ import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 
 const app = express();
+
+// Trust reverse proxy headers (Render, Vercel, Cloudflare) for accurate rate-limiting and client IP resolution
+app.set("trust proxy", 1);
 
 export const allowedOrigins = [
   "https://deepanshu-job-portal-frontend-five.vercel.app",
