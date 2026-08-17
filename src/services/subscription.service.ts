@@ -306,12 +306,33 @@ export async function getUserSubscriptionDetails(userId: string) {
   const user = await User.findById(userId);
   if (!user) throw new Error("User not found");
 
+  // 1. Look for the latest active or past_due subscription
   let subscription = await Subscription.findOne({
     userId,
     status: { $in: ["active", "past_due"] },
-  }).populate("planId");
+  })
+    .sort({ createdAt: -1 })
+    .populate("planId");
 
-  // Default Fallback: Assign free tier if no active subscription exists
+  // 2. Auto-Recovery: If active plan is missing or free, check for recent active paid transaction
+  if (!subscription || subscription.planCode.includes("free")) {
+    const latestPaidTxn = await PaymentTransaction.findOne({
+      userId,
+      status: "succeeded",
+      amount: { $gt: 0 },
+    }).sort({ createdAt: -1 });
+
+    if (latestPaidTxn && latestPaidTxn.subscriptionId) {
+      const paidSub = await Subscription.findById(latestPaidTxn.subscriptionId).populate("planId");
+      if (paidSub && new Date(paidSub.currentPeriodEnd) > new Date()) {
+        paidSub.status = "active";
+        await paidSub.save();
+        subscription = paidSub;
+      }
+    }
+  }
+
+  // Default Fallback: Assign free tier if no subscription exists
   if (!subscription) {
     const defaultCode = user.role === "recruiter" ? "recruiter_free" : "candidate_free";
     let freePlan = await SubscriptionPlan.findOne({ code: defaultCode });
@@ -419,18 +440,18 @@ export async function processCheckoutSession(
   // Idempotency check: Return existing subscription & transaction if this payment was already processed
   const existingTxn = await PaymentTransaction.findOne({ transactionId });
   if (existingTxn) {
-    const existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
-    return {
-      subscription: existingSub,
-      transaction: existingTxn,
-    };
+    let existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
+    if (existingSub) {
+      if (existingSub.status !== "active") {
+        existingSub.status = "active";
+        await existingSub.save();
+      }
+      return {
+        subscription: existingSub,
+        transaction: existingTxn,
+      };
+    }
   }
-
-  // Transition previous active subscriptions to canceled AFTER new subscription attempt succeeds
-  await Subscription.updateMany(
-    { userId, status: "active" },
-    { $set: { status: "canceled", cancelAtPeriodEnd: false } }
-  );
 
   // Determine if this is a recurring subscription (starts with sub_) or a one-time prepaid order
   const isRecurring = Boolean(
@@ -480,6 +501,12 @@ export async function processCheckoutSession(
         couponUsed: appliedCoupon?.code,
       },
     });
+
+    // Mark other previous subscriptions as canceled, strictly excluding the newly created subscription
+    await Subscription.updateMany(
+      { userId, status: "active", _id: { $ne: newSubscription._id } },
+      { $set: { status: "canceled", cancelAtPeriodEnd: false } }
+    );
   } catch (err: any) {
     if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
       // Concurrent race condition: another webhook/request has already inserted this transaction
@@ -490,6 +517,10 @@ export async function processCheckoutSession(
           await Subscription.findByIdAndDelete(newSubscription._id).catch(() => {});
         }
         const existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
+        if (existingSub && existingSub.status !== "active") {
+          existingSub.status = "active";
+          await existingSub.save();
+        }
         return {
           subscription: existingSub,
           transaction: existingTxn,

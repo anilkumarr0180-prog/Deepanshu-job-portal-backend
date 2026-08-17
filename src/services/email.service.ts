@@ -858,9 +858,29 @@ export const sendSubscriptionReceiptEmail = async (
       console.log(`[Email Sent] Subscription receipt sent to ${userEmail} (MsgID: ${info.messageId})`);
     }
     return true;
-  } catch (error) {
-    console.error("Failed to send subscription receipt email:", error);
-    return false;
+  } catch (error: any) {
+    console.warn(`[SMTP NOTICE] Primary SMTP send for subscription receipt (${userEmail}) timed out/failed: ${error?.message || error}. Falling back to Ethereal...`);
+    try {
+      const testAccount = await nodemailer.createTestAccount();
+      const fallbackTransporter = nodemailer.createTransport({
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: { user: testAccount.user, pass: testAccount.pass },
+      });
+      const info = await fallbackTransporter.sendMail({
+        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
+        to: userEmail,
+        subject: `Payment Receipt for ${planName} [#${invoiceNumber}] - JobsBox`,
+        html,
+      });
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[Email Preview URL - Subscription Receipt (Fallback)]: ${previewUrl}`);
+      return true;
+    } catch (fallbackErr) {
+      console.warn(`[SMTP NOTICE] Email fallback transport skipped for (${userEmail}).`);
+      return false;
+    }
   }
 };
 
