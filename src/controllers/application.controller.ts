@@ -101,12 +101,13 @@ export const updateApplicationStatus = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const applicationId = req.params.id as string;
     const recruiterId = req.user!.userId;
-    const { status } = req.body;
+    const { status, interviewDetails } = req.body;
 
     const application = await applicationService.updateApplicationStatus(
       applicationId,
       recruiterId,
-      status
+      status,
+      interviewDetails
     );
 
     res.status(HTTP_STATUS.OK).json({

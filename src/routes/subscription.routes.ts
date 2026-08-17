@@ -1,10 +1,11 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { authMiddleware } from "../middleware/auth.middleware";
 import {
   getPlansController,
   getMySubscriptionController,
   checkoutController,
   cancelSubscriptionController,
+  reactivateSubscriptionController,
   getTransactionsController,
   webhookController,
   validateCouponController,
@@ -29,6 +30,7 @@ router.post("/verify-razorpay-payment", authMiddleware, verifyRazorpayPaymentCon
 router.post("/boost-job", authMiddleware, boostJobController);
 router.get("/invoices/:id/download", authMiddleware, downloadInvoiceController);
 router.post("/cancel", authMiddleware, cancelSubscriptionController);
+router.post("/reactivate", authMiddleware, reactivateSubscriptionController);
 router.get("/transactions", authMiddleware, getTransactionsController);
 
 export default router;

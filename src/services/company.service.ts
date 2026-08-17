@@ -1,15 +1,25 @@
 import Company, { ISocialLinks } from "../models/company.model";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
+import cloudinaryService from "./cloudinary.service";
+
 import {
   getPaginationOptions,
   buildPaginatedResult,
 } from "../utils/pagination";
 
+// ---------------------------------------------------------------------------
+// Create Company Input
+// ---------------------------------------------------------------------------
+
 export interface CreateCompanyInput {
   name: string;
   description: string;
+
+  // Cloudinary
   logo?: string;
+  logoPublicId?: string;
+
   website?: string;
   industry?: string;
   companySize?: string;
@@ -23,10 +33,18 @@ export interface CreateCompanyInput {
   socialLinks?: ISocialLinks;
 }
 
+// ---------------------------------------------------------------------------
+// Update Company Input
+// ---------------------------------------------------------------------------
+
 export interface UpdateCompanyInput {
   name?: string;
   description?: string;
+
+  // Cloudinary
   logo?: string;
+  logoPublicId?: string;
+
   website?: string;
   industry?: string;
   companySize?: string;
@@ -39,6 +57,10 @@ export interface UpdateCompanyInput {
   country?: string;
   socialLinks?: ISocialLinks;
 }
+
+// ---------------------------------------------------------------------------
+// Company Filters
+// ---------------------------------------------------------------------------
 
 export interface CompanyFilters {
   page?: number | string;
@@ -48,27 +70,27 @@ export interface CompanyFilters {
   sort?: string;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Regex Escape Helper
-|--------------------------------------------------------------------------
-| Escapes user-supplied search strings to prevent ReDoS and regex injection.
-|--------------------------------------------------------------------------
-*/
+// ---------------------------------------------------------------------------
+// Regex Escape Helper
+// Prevents regex injection / ReDoS through search input.
+// ---------------------------------------------------------------------------
+
 const escapeRegex = (text: string): string => {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
-/*
-|--------------------------------------------------------------------------
-| Create Company Profile
-|--------------------------------------------------------------------------
-*/
+// ---------------------------------------------------------------------------
+// Create Company Profile
+// ---------------------------------------------------------------------------
+
 export const createCompany = async (
   recruiterId: string,
   companyData: CreateCompanyInput
 ) => {
-  const existingCompany = await Company.findOne({ recruiterId });
+  // A recruiter can own only one company profile.
+  const existingCompany = await Company.findOne({
+    recruiterId,
+  });
 
   if (existingCompany) {
     throw new AppError(
@@ -77,6 +99,7 @@ export const createCompany = async (
     );
   }
 
+  // Normalize email before storing.
   const normalizedEmail = companyData.email
     ? companyData.email.trim().toLowerCase()
     : undefined;
@@ -84,39 +107,62 @@ export const createCompany = async (
   const company = await Company.create({
     name: companyData.name,
     description: companyData.description,
+
+    // -----------------------------------------------------------------------
+    // Cloudinary
+    // -----------------------------------------------------------------------
+
     logo: companyData.logo,
+    logoPublicId: companyData.logoPublicId,
+
+    // -----------------------------------------------------------------------
+    // Company Information
+    // -----------------------------------------------------------------------
+
     website: companyData.website,
     industry: companyData.industry,
     companySize: companyData.companySize,
     foundedYear: companyData.foundedYear,
+
     email: normalizedEmail,
+
     phone: companyData.phone,
     address: companyData.address,
     city: companyData.city,
     state: companyData.state,
     country: companyData.country,
+
     socialLinks: companyData.socialLinks,
+
     recruiterId,
+
+    // Keep your existing behavior.
     isVerified: true,
   });
 
   return company;
 };
 
-/*
-|--------------------------------------------------------------------------
-| Get Logged-In Recruiter's Company
-|--------------------------------------------------------------------------
-*/
-export const getMyCompany = async (recruiterId: string) => {
-  const existing = await Company.findOne({ recruiterId });
+// ---------------------------------------------------------------------------
+// Get Logged-In Recruiter's Company
+// ---------------------------------------------------------------------------
 
+export const getMyCompany = async (
+  recruiterId: string
+) => {
+  const existing = await Company.findOne({
+    recruiterId,
+  });
+
+  // Keep your existing verification behavior.
   if (existing && !existing.isVerified) {
     existing.isVerified = true;
     await existing.save();
   }
 
-  const company = await Company.findOne({ recruiterId })
+  const company = await Company.findOne({
+    recruiterId,
+  })
     .populate("recruiterId", "name email phone")
     .lean();
 
@@ -130,16 +176,20 @@ export const getMyCompany = async (recruiterId: string) => {
   return company;
 };
 
-/*
-|--------------------------------------------------------------------------
-| Update Logged-In Recruiter's Company
-|--------------------------------------------------------------------------
-*/
+// ---------------------------------------------------------------------------
+// Update Logged-In Recruiter's Company
+// ---------------------------------------------------------------------------
+
 export const updateMyCompany = async (
   recruiterId: string,
   updateData: UpdateCompanyInput
 ) => {
-  const company = await Company.findOne({ recruiterId });
+  // Important:
+  // We identify the company using the authenticated recruiter's ID.
+  // The client does not provide a company ID.
+  const company = await Company.findOne({
+    recruiterId,
+  });
 
   if (!company) {
     throw new AppError(
@@ -148,115 +198,284 @@ export const updateMyCompany = async (
     );
   }
 
-  if (updateData.name !== undefined) company.name = updateData.name;
-  if (updateData.description !== undefined) company.description = updateData.description;
-  if (updateData.logo !== undefined) company.logo = updateData.logo;
-  if (updateData.website !== undefined) company.website = updateData.website;
-  if (updateData.industry !== undefined) company.industry = updateData.industry;
-  if (updateData.companySize !== undefined) company.companySize = updateData.companySize;
-  if (updateData.foundedYear !== undefined) company.foundedYear = updateData.foundedYear;
-  if (updateData.email !== undefined) {
-    company.email = updateData.email ? updateData.email.trim().toLowerCase() : undefined;
-  }
-  if (updateData.phone !== undefined) company.phone = updateData.phone;
-  if (updateData.address !== undefined) company.address = updateData.address;
-  if (updateData.city !== undefined) company.city = updateData.city;
-  if (updateData.state !== undefined) company.state = updateData.state;
-  if (updateData.country !== undefined) company.country = updateData.country;
-  if (updateData.socialLinks !== undefined) company.socialLinks = updateData.socialLinks;
+  const oldLogoPublicId = company.logoPublicId;
 
-  await company.save();
+  // -------------------------------------------------------------------------
+  // Basic Company Information
+  // -------------------------------------------------------------------------
+
+  if (updateData.name !== undefined) {
+    company.name = updateData.name;
+  }
+
+  if (updateData.description !== undefined) {
+    company.description = updateData.description;
+  }
+
+  // -------------------------------------------------------------------------
+  // Cloudinary Company Logo
+  // -------------------------------------------------------------------------
+
+  if (updateData.logo !== undefined) {
+    company.logo = updateData.logo;
+  }
+
+  if (updateData.logoPublicId !== undefined) {
+    company.logoPublicId = updateData.logoPublicId;
+  }
+
+  // -------------------------------------------------------------------------
+  // Company Information
+  // -------------------------------------------------------------------------
+
+  if (updateData.website !== undefined) {
+    company.website = updateData.website;
+  }
+
+  if (updateData.industry !== undefined) {
+    company.industry = updateData.industry;
+  }
+
+  if (updateData.companySize !== undefined) {
+    company.companySize = updateData.companySize;
+  }
+
+  if (updateData.foundedYear !== undefined) {
+    company.foundedYear = updateData.foundedYear;
+  }
+
+  if (updateData.email !== undefined) {
+    company.email = updateData.email
+      ? updateData.email.trim().toLowerCase()
+      : undefined;
+  }
+
+  if (updateData.phone !== undefined) {
+    company.phone = updateData.phone;
+  }
+
+  if (updateData.address !== undefined) {
+    company.address = updateData.address;
+  }
+
+  if (updateData.city !== undefined) {
+    company.city = updateData.city;
+  }
+
+  if (updateData.state !== undefined) {
+    company.state = updateData.state;
+  }
+
+  if (updateData.country !== undefined) {
+    company.country = updateData.country;
+  }
+
+  if (updateData.socialLinks !== undefined) {
+    company.socialLinks = updateData.socialLinks;
+  }
+
+  try {
+    await company.save();
+  } catch (error) {
+    // If DB update fails after a new Cloudinary upload, attempt cleanup of new asset
+    if (
+      updateData.logoPublicId &&
+      updateData.logoPublicId !== oldLogoPublicId
+    ) {
+      try {
+        await cloudinaryService.deleteAsset(updateData.logoPublicId, "image");
+      } catch (cleanupErr) {
+        console.error(
+          "Failed to cleanup new logo asset after DB error:",
+          cleanupErr
+        );
+      }
+    }
+    throw error;
+  }
+
+  // After DB update succeeds, delete old Cloudinary asset if replaced/removed
+  if (
+    oldLogoPublicId &&
+    oldLogoPublicId !== company.logoPublicId
+  ) {
+    try {
+      await cloudinaryService.deleteAsset(oldLogoPublicId, "image");
+    } catch (cleanupErr) {
+      console.error(
+        "Failed to delete old company logo asset from Cloudinary:",
+        cleanupErr
+      );
+    }
+  }
 
   return company;
 };
 
-/*
-|--------------------------------------------------------------------------
-| Get Company By ID (Public)
-|--------------------------------------------------------------------------
-*/
-export const getCompanyById = async (companyId: string) => {
+// ---------------------------------------------------------------------------
+// Get Company By ID - Public
+// ---------------------------------------------------------------------------
+
+export const getCompanyById = async (
+  companyId: string
+) => {
   const company = await Company.findById(companyId)
     .populate("recruiterId", "name email")
     .lean();
 
   if (!company) {
-    throw new AppError("Company not found.", HTTP_STATUS.NOT_FOUND);
+    throw new AppError(
+      "Company not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
   }
 
   return company;
 };
 
-/*
-|--------------------------------------------------------------------------
-| Get All Companies + Search + Filtering + Pagination
-|--------------------------------------------------------------------------
-*/
-export const getCompanies = async (filters: CompanyFilters = {}) => {
+// ---------------------------------------------------------------------------
+// Get All Companies
+// Search + Filtering + Pagination
+// ---------------------------------------------------------------------------
+
+export const getCompanies = async (
+  filters: CompanyFilters = {}
+) => {
   const query: Record<string, unknown> = {};
+
+  // -------------------------------------------------------------------------
+  // Search
+  // -------------------------------------------------------------------------
 
   if (filters.search) {
     const trimmedSearch = filters.search.trim();
+
     if (trimmedSearch) {
       const escaped = escapeRegex(trimmedSearch);
+
       query.$or = [
-        { name: { $regex: escaped, $options: "i" } },
-        { industry: { $regex: escaped, $options: "i" } },
-        { description: { $regex: escaped, $options: "i" } },
+        {
+          name: {
+            $regex: escaped,
+            $options: "i",
+          },
+        },
+        {
+          industry: {
+            $regex: escaped,
+            $options: "i",
+          },
+        },
+        {
+          description: {
+            $regex: escaped,
+            $options: "i",
+          },
+        },
       ];
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Industry Filter
+  // -------------------------------------------------------------------------
+
   if (filters.industry) {
-    const escapedIndustry = escapeRegex(filters.industry.trim());
-    query.industry = { $regex: escapedIndustry, $options: "i" };
+    const escapedIndustry = escapeRegex(
+      filters.industry.trim()
+    );
+
+    query.industry = {
+      $regex: escapedIndustry,
+      $options: "i",
+    };
   }
 
-  const { page, limit, skip } = getPaginationOptions(filters);
+  // -------------------------------------------------------------------------
+  // Pagination
+  // -------------------------------------------------------------------------
 
-  let sortOptions: Record<string, 1 | -1> = { createdAt: -1 };
+  const { page, limit, skip } =
+    getPaginationOptions(filters);
+
+  // -------------------------------------------------------------------------
+  // Sorting
+  // -------------------------------------------------------------------------
+
+  let sortOptions: Record<string, 1 | -1> = {
+    createdAt: -1,
+  };
 
   switch (filters.sort) {
     case "oldest":
-      sortOptions = { createdAt: 1 };
+      sortOptions = {
+        createdAt: 1,
+      };
       break;
+
     case "name-asc":
-      sortOptions = { name: 1 };
+      sortOptions = {
+        name: 1,
+      };
       break;
+
     case "name-desc":
-      sortOptions = { name: -1 };
+      sortOptions = {
+        name: -1,
+      };
       break;
+
     default:
-      sortOptions = { createdAt: -1 };
+      sortOptions = {
+        createdAt: -1,
+      };
   }
 
-  const [companies, totalCompanies] = await Promise.all([
-    Company.find(query)
-      .populate("recruiterId", "name email")
-      .sort(sortOptions)
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    Company.countDocuments(query),
-  ]);
+  // -------------------------------------------------------------------------
+  // Query
+  // -------------------------------------------------------------------------
 
-  return buildPaginatedResult(companies, totalCompanies, page, limit);
+  const [companies, totalCompanies] =
+    await Promise.all([
+      Company.find(query)
+        .populate("recruiterId", "name email")
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      Company.countDocuments(query),
+    ]);
+
+  return buildPaginatedResult(
+    companies,
+    totalCompanies,
+    page,
+    limit
+  );
 };
 
-/*
-|--------------------------------------------------------------------------
-| Delete Company (Admin Only)
-|--------------------------------------------------------------------------
-*/
-export const deleteCompany = async (companyId: string) => {
+// ---------------------------------------------------------------------------
+// Delete Company - Admin Only
+// ---------------------------------------------------------------------------
+
+export const deleteCompany = async (
+  companyId: string
+) => {
   const company = await Company.findById(companyId);
 
   if (!company) {
-    throw new AppError("Company not found.", HTTP_STATUS.NOT_FOUND);
+    throw new AppError(
+      "Company not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
   }
 
-  const Job = (await import("../models/job.model")).default;
-  const { JOB_STATUS } = await import("../constants/job-status");
+  const Job =
+    (await import("../models/job.model")).default;
+
+  const { JOB_STATUS } =
+    await import("../constants/job-status");
 
   const activeJob = await Job.findOne({
     recruiterId: company.recruiterId,

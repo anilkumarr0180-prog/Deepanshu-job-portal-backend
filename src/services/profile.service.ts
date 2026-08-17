@@ -12,12 +12,17 @@ import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
 import { sanitizeUser } from "../utils/sanitize-user";
 import { Types } from "mongoose";
+import cloudinaryService from "./cloudinary.service";
 
 interface UpdateProfileInput {
   name?: string;
   phone?: string;
   profilePicture?: string;
+  profilePicturePublicId?: string;
   resumeUrl?: string;
+  resumePublicId?: string;
+  resumeFileName?: string;
+  resumeUploadedAt?: Date;
   headline?: string;
   bio?: string;
   skills?: string[];
@@ -54,6 +59,7 @@ export const getProfile = async (userId: string) => {
       ...safeUser,
       phone: profile.phone ?? safeUser.phone,
       profilePicture: profile.profilePicture ?? safeUser.profilePicture,
+      profilePicturePublicId: profile.profilePicturePublicId,
       designation: profile.designation,
       department: profile.department,
       companyId: profile.companyId,
@@ -75,7 +81,11 @@ export const getProfile = async (userId: string) => {
     ...safeUser,
     phone: profile.phone ?? safeUser.phone,
     profilePicture: profile.profilePicture ?? safeUser.profilePicture,
+    profilePicturePublicId: profile.profilePicturePublicId,
     resumeUrl: profile.resumeUrl ?? safeUser.resumeUrl,
+    resumePublicId: profile.resumePublicId,
+    resumeFileName: profile.resumeFileName,
+    resumeUploadedAt: profile.resumeUploadedAt,
     headline: profile.headline,
     bio: profile.bio,
     skills: profile.skills || [],
@@ -112,9 +122,13 @@ export const updateProfile = async (
       profile = await RecruiterProfile.create({ userId: user._id });
     }
 
+    const oldPicPublicId = profile.profilePicturePublicId;
+
     if (profileData.phone !== undefined) profile.phone = profileData.phone;
     if (profileData.profilePicture !== undefined)
       profile.profilePicture = profileData.profilePicture;
+    if (profileData.profilePicturePublicId !== undefined)
+      profile.profilePicturePublicId = profileData.profilePicturePublicId;
     if (profileData.designation !== undefined)
       profile.designation = profileData.designation;
     if (profileData.department !== undefined)
@@ -125,7 +139,49 @@ export const updateProfile = async (
     if (profileData.companyId !== undefined)
       profile.companyId = new Types.ObjectId(profileData.companyId);
 
-    await profile.save();
+    try {
+      await profile.save();
+
+      const userUpdates: Record<string, unknown> = {};
+      if (profileData.name !== undefined) userUpdates.name = profileData.name;
+      if (profileData.profilePicture !== undefined)
+        userUpdates.profilePicture = profileData.profilePicture;
+      if (Object.keys(userUpdates).length > 0) {
+        await User.findByIdAndUpdate(user._id, userUpdates);
+      }
+    } catch (err) {
+      if (
+        profileData.profilePicturePublicId &&
+        profileData.profilePicturePublicId !== oldPicPublicId
+      ) {
+        try {
+          await cloudinaryService.deleteAsset(
+            profileData.profilePicturePublicId,
+            "image"
+          );
+        } catch (cleanupErr) {
+          console.error(
+            "Failed to cleanup new profile picture asset on DB error:",
+            cleanupErr
+          );
+        }
+      }
+      throw err;
+    }
+
+    if (
+      oldPicPublicId &&
+      oldPicPublicId !== profile.profilePicturePublicId
+    ) {
+      try {
+        await cloudinaryService.deleteAsset(oldPicPublicId, "image");
+      } catch (cleanupErr) {
+        console.error(
+          "Failed to delete old recruiter profile picture asset:",
+          cleanupErr
+        );
+      }
+    }
   } else {
     let profile = await CandidateProfile.findOne({ userId: user._id });
 
@@ -134,11 +190,28 @@ export const updateProfile = async (
       profile = await CandidateProfile.create({ userId: user._id });
     }
 
+    const oldPicPublicId = profile.profilePicturePublicId;
+    const oldResumePublicId = profile.resumePublicId;
+
     if (profileData.phone !== undefined) profile.phone = profileData.phone;
     if (profileData.profilePicture !== undefined)
       profile.profilePicture = profileData.profilePicture;
-    if (profileData.resumeUrl !== undefined)
+    if (profileData.profilePicturePublicId !== undefined)
+      profile.profilePicturePublicId = profileData.profilePicturePublicId;
+
+    if (profileData.resumeUrl !== undefined) {
       profile.resumeUrl = profileData.resumeUrl;
+      if (profileData.resumeUploadedAt === undefined && profileData.resumeUrl) {
+        profile.resumeUploadedAt = new Date();
+      }
+    }
+    if (profileData.resumePublicId !== undefined)
+      profile.resumePublicId = profileData.resumePublicId;
+    if (profileData.resumeFileName !== undefined)
+      profile.resumeFileName = profileData.resumeFileName;
+    if (profileData.resumeUploadedAt !== undefined)
+      profile.resumeUploadedAt = profileData.resumeUploadedAt;
+
     if (profileData.headline !== undefined)
       profile.headline = profileData.headline;
     if (profileData.bio !== undefined) profile.bio = profileData.bio;
@@ -154,7 +227,79 @@ export const updateProfile = async (
     if (profileData.socialLinks !== undefined)
       profile.socialLinks = profileData.socialLinks;
 
-    await profile.save();
+    try {
+      await profile.save();
+
+      const userUpdates: Record<string, unknown> = {};
+      if (profileData.name !== undefined) userUpdates.name = profileData.name;
+      if (profileData.profilePicture !== undefined)
+        userUpdates.profilePicture = profileData.profilePicture;
+      if (Object.keys(userUpdates).length > 0) {
+        await User.findByIdAndUpdate(user._id, userUpdates);
+      }
+    } catch (err) {
+      if (
+        profileData.profilePicturePublicId &&
+        profileData.profilePicturePublicId !== oldPicPublicId
+      ) {
+        try {
+          await cloudinaryService.deleteAsset(
+            profileData.profilePicturePublicId,
+            "image"
+          );
+        } catch (cleanupErr) {
+          console.error(
+            "Failed to cleanup new profile picture asset on DB error:",
+            cleanupErr
+          );
+        }
+      }
+      if (
+        profileData.resumePublicId &&
+        profileData.resumePublicId !== oldResumePublicId
+      ) {
+        try {
+          await cloudinaryService.deleteAsset(
+            profileData.resumePublicId,
+            "raw"
+          );
+        } catch (cleanupErr) {
+          console.error(
+            "Failed to cleanup new resume asset on DB error:",
+            cleanupErr
+          );
+        }
+      }
+      throw err;
+    }
+
+    if (
+      oldPicPublicId &&
+      oldPicPublicId !== profile.profilePicturePublicId
+    ) {
+      try {
+        await cloudinaryService.deleteAsset(oldPicPublicId, "image");
+      } catch (cleanupErr) {
+        console.error(
+          "Failed to delete old candidate profile picture asset:",
+          cleanupErr
+        );
+      }
+    }
+
+    if (
+      oldResumePublicId &&
+      oldResumePublicId !== profile.resumePublicId
+    ) {
+      try {
+        await cloudinaryService.deleteAsset(oldResumePublicId, "raw");
+      } catch (cleanupErr) {
+        console.error(
+          "Failed to delete old candidate resume asset:",
+          cleanupErr
+        );
+      }
+    }
   }
 
   return getProfile(userId);

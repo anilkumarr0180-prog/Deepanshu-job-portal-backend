@@ -1,4 +1,4 @@
-import PaymentTransaction, { IPaymentTransaction } from "../models/payment-transaction.model";
+﻿import PaymentTransaction, { IPaymentTransaction } from "../models/payment-transaction.model";
 import User from "../models/user.model";
 import SubscriptionPlan from "../models/subscription-plan.model";
 
@@ -76,13 +76,13 @@ export function generateInvoiceHTML(invoice: any): string {
             <tr>
               <td>${invoice.plan.name} - ${invoice.plan.description}</td>
               <td>Monthly</td>
-              <td>$${invoice.amount} ${invoice.currency}</td>
+              <td>₹${Number(invoice.amount).toLocaleString("en-IN")} ${invoice.currency}</td>
             </tr>
           </tbody>
         </table>
 
         <div class="total">
-          Total Paid: $${invoice.amount} ${invoice.currency}
+          Total Paid: ₹${Number(invoice.amount).toLocaleString("en-IN")} ${invoice.currency}
         </div>
       </div>
     </body>

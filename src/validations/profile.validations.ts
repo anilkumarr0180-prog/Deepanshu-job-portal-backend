@@ -31,8 +31,12 @@ export const updateProfileSchema = z.object({
       .or(z.literal("")),
 
     profilePicture: urlSchema,
+    profilePicturePublicId: z.string().trim().optional(),
 
     resumeUrl: urlSchema,
+    resumePublicId: z.string().trim().optional(),
+    resumeFileName: z.string().trim().optional(),
+    resumeUploadedAt: z.coerce.date().optional(),
 
     headline: z.string().trim().max(200, "Headline cannot exceed 200 characters.").optional(),
 

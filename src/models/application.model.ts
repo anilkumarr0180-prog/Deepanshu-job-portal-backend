@@ -9,8 +9,25 @@ export interface IApplication extends Document {
   jobId: Types.ObjectId;
   candidateProfileId?: Types.ObjectId;
   applicantId: Types.ObjectId;
+  applicantName?: string;
+  applicantEmail?: string;
+  applicantPhone?: string;
+  applicantDesignation?: string;
+  experienceYears?: number;
+  relevantSkills?: string[];
+  noticePeriod?: string;
   resume: string;
+  resumePublicId?: string;
+  resumeFileName?: string;
   coverLetter?: string;
+  interviewDetails?: {
+    mode?: "video" | "in-person" | "phone";
+    date?: string;
+    time?: string;
+    type?: string;
+    locationOrLink?: string;
+    notes?: string;
+  };
   status: ApplicationStatus;
   isDeleted: boolean;
   createdAt: Date;
@@ -47,15 +64,69 @@ const applicationSchema = new Schema<IApplication>(
       index: true,
     },
 
+    applicantName: {
+      type: String,
+      trim: true,
+    },
+
+    applicantEmail: {
+      type: String,
+      trim: true,
+    },
+
+    applicantPhone: {
+      type: String,
+      trim: true,
+    },
+
+    applicantDesignation: {
+      type: String,
+      trim: true,
+    },
+
+    experienceYears: {
+      type: Number,
+      default: 0,
+    },
+
+    relevantSkills: {
+      type: [String],
+      default: [],
+    },
+
+    noticePeriod: {
+      type: String,
+      trim: true,
+    },
+
     resume: {
       type: String,
       required: true,
       trim: true,
     },
 
+    resumePublicId: {
+      type: String,
+      trim: true,
+    },
+
+    resumeFileName: {
+      type: String,
+      trim: true,
+    },
+
     coverLetter: {
       type: String,
       trim: true,
+    },
+
+    interviewDetails: {
+      mode: { type: String, enum: ["video", "in-person", "phone"], default: "video" },
+      date: { type: String, trim: true },
+      time: { type: String, trim: true },
+      type: { type: String, trim: true },
+      locationOrLink: { type: String, trim: true },
+      notes: { type: String, trim: true },
     },
 
     status: {

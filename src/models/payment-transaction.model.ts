@@ -6,12 +6,16 @@ export interface IPaymentTransaction extends Document {
   planId?: Types.ObjectId;
   amount: number;
   currency: string;
-  provider: "mock" | "stripe" | "razorpay";
+  provider: "internal" | "stripe" | "razorpay" | "mock";
   transactionId: string;
+  providerOrderId?: string;
+  providerPaymentId?: string;
+  providerSubscriptionId?: string;
   status: "succeeded" | "failed" | "pending" | "refunded";
   type: "checkout" | "renewal" | "refund";
   paymentMethod: string;
   invoiceUrl?: string;
+  paidAt?: Date;
   metadata?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
@@ -40,22 +44,37 @@ const paymentTransactionSchema = new Schema<IPaymentTransaction>(
     },
     currency: {
       type: String,
-      default: "USD",
+      default: "INR",
     },
     provider: {
       type: String,
-      enum: ["mock", "stripe", "razorpay"],
-      default: "mock",
+      enum: ["internal", "stripe", "razorpay", "mock"],
+      default: "razorpay",
     },
     transactionId: {
       type: String,
       required: true,
       unique: true,
     },
+    providerOrderId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+    providerPaymentId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+    providerSubscriptionId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
     status: {
       type: String,
       enum: ["succeeded", "failed", "pending", "refunded"],
-      default: "succeeded",
+      default: "pending",
       index: true,
     },
     type: {
@@ -69,6 +88,9 @@ const paymentTransactionSchema = new Schema<IPaymentTransaction>(
     },
     invoiceUrl: {
       type: String,
+    },
+    paidAt: {
+      type: Date,
     },
     metadata: {
       type: Schema.Types.Mixed,

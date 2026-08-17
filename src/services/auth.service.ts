@@ -312,5 +312,21 @@ export const getCurrentUser = async (userId: string) => {
     );
   }
 
-  return sanitizeUser(user);
+  const safeUser = sanitizeUser(user);
+
+  if (!safeUser.profilePicture) {
+    if (user.role === USER_ROLES.RECRUITER) {
+      const recProfile = await RecruiterProfile.findOne({ userId: user._id });
+      if (recProfile?.profilePicture) {
+        safeUser.profilePicture = recProfile.profilePicture;
+      }
+    } else if (user.role === USER_ROLES.CANDIDATE) {
+      const candProfile = await CandidateProfile.findOne({ userId: user._id });
+      if (candProfile?.profilePicture) {
+        safeUser.profilePicture = candProfile.profilePicture;
+      }
+    }
+  }
+
+  return safeUser;
 };

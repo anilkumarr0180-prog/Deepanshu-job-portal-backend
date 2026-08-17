@@ -285,7 +285,8 @@ export const getJobs = async (
 
   const [jobs, totalJobs] = await Promise.all([
     Job.find(query)
-      .populate("recruiterId", "name email")
+      .populate("recruiterId", "name email profilePicture")
+      .populate("companyId", "name logo website location")
       .sort(sortOptions)
       .skip(skip)
       .limit(limit)
@@ -294,8 +295,34 @@ export const getJobs = async (
     Job.countDocuments(query),
   ]);
 
+  const Company = (await import("../models/company.model")).default;
+  const RecruiterProfile = (await import("../models/recruiter-profile.model")).default;
+
+  const enrichedJobs = await Promise.all(
+    jobs.map(async (job: any) => {
+      let companyLogo = job.companyId?.logo || job.recruiterId?.profilePicture || "";
+
+      if (!companyLogo && job.recruiterId?._id) {
+        const company = await Company.findOne({ recruiterId: job.recruiterId._id }).select("logo");
+        if (company?.logo) {
+          companyLogo = company.logo;
+        } else {
+          const profile = await RecruiterProfile.findOne({ userId: job.recruiterId._id }).select("profilePicture");
+          if (profile?.profilePicture) {
+            companyLogo = profile.profilePicture;
+          }
+        }
+      }
+
+      return {
+        ...job,
+        companyLogo,
+      };
+    })
+  );
+
   return {
-    jobs,
+    jobs: enrichedJobs,
     pagination: {
       page,
       limit,
@@ -339,7 +366,8 @@ export const getJobById = async (
   user?: { userId: string; role: string }
 ) => {
   const job = await Job.findById(jobId)
-    .populate("recruiterId", "name email")
+    .populate("recruiterId", "name email profilePicture")
+    .populate("companyId", "name logo website location description email phone address city state country")
     .lean();
 
   if (!job) {
@@ -363,7 +391,28 @@ export const getJobById = async (
     }
   }
 
-  return job;
+  let companyLogo = (job.companyId as any)?.logo || (job.recruiterId as any)?.profilePicture || "";
+
+  if (!companyLogo && job.recruiterId) {
+    const rawRecruiterId = (job.recruiterId as any)._id || job.recruiterId;
+    const Company = (await import("../models/company.model")).default;
+    const RecruiterProfile = (await import("../models/recruiter-profile.model")).default;
+
+    const company = await Company.findOne({ recruiterId: rawRecruiterId }).select("logo");
+    if (company?.logo) {
+      companyLogo = company.logo;
+    } else {
+      const profile = await RecruiterProfile.findOne({ userId: rawRecruiterId }).select("profilePicture");
+      if (profile?.profilePicture) {
+        companyLogo = profile.profilePicture;
+      }
+    }
+  }
+
+  return {
+    ...job,
+    companyLogo,
+  };
 };
 
 /*
