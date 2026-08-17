@@ -455,29 +455,49 @@ export async function processCheckoutSession(
     usages: { jobsPostedCount: 0, featuredJobsCount: 0, inmailCreditsUsed: 0 },
   });
 
-  const transaction = await PaymentTransaction.create({
-    userId,
-    subscriptionId: newSubscription._id,
-    planId: targetPlan._id,
-    amount: Number(finalAmount.toFixed(2)),
-    currency: targetPlan.currency,
-    provider: providerType,
-    transactionId,
-    providerOrderId: razorpayDetails?.orderId,
-    providerPaymentId: razorpayDetails?.paymentId,
-    providerSubscriptionId: razorpayDetails?.subscriptionId,
-    status: "succeeded",
-    type: "checkout",
-    paymentMethod,
-    paidAt: new Date(),
-    invoiceUrl: `https://jobsbox.com/invoices/inv_${Date.now()}.pdf`,
-    metadata: {
-      planName: targetPlan.name,
-      planCode: targetPlan.code,
-      userEmail: user.email,
-      couponUsed: appliedCoupon?.code,
-    },
-  });
+  let transaction: any;
+  try {
+    transaction = await PaymentTransaction.create({
+      userId,
+      subscriptionId: newSubscription._id,
+      planId: targetPlan._id,
+      amount: Number(finalAmount.toFixed(2)),
+      currency: targetPlan.currency,
+      provider: providerType,
+      transactionId,
+      providerOrderId: razorpayDetails?.orderId,
+      providerPaymentId: razorpayDetails?.paymentId,
+      providerSubscriptionId: razorpayDetails?.subscriptionId,
+      status: "succeeded",
+      type: "checkout",
+      paymentMethod,
+      paidAt: new Date(),
+      invoiceUrl: `https://jobsbox.com/invoices/inv_${Date.now()}.pdf`,
+      metadata: {
+        planName: targetPlan.name,
+        planCode: targetPlan.code,
+        userEmail: user.email,
+        couponUsed: appliedCoupon?.code,
+      },
+    });
+  } catch (err: any) {
+    if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
+      // Concurrent race condition: another webhook/request has already inserted this transaction
+      const existingTxn = await PaymentTransaction.findOne({ transactionId });
+      if (existingTxn) {
+        // Clean up redundant duplicate subscription created during this race
+        if (newSubscription && newSubscription._id.toString() !== existingTxn.subscriptionId?.toString()) {
+          await Subscription.findByIdAndDelete(newSubscription._id).catch(() => {});
+        }
+        const existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
+        return {
+          subscription: existingSub,
+          transaction: existingTxn,
+        };
+      }
+    }
+    throw err;
+  }
 
   const invoiceNumber = `INV-${new Date().getFullYear()}-${transaction._id.toString().substring(18).toUpperCase()}`;
 
@@ -628,19 +648,25 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
   const payload = eventData?.payload || {};
 
   try {
-    if (eventType === "payment.captured" || eventType === "subscription.charged" || eventType === "subscription.activated") {
-      const entity = payload.payment?.entity || payload.subscription?.entity;
-      const notes = entity?.notes || {};
+    if (
+      eventType === "payment.captured" ||
+      eventType === "order.paid" ||
+      eventType === "subscription.charged" ||
+      eventType === "subscription.activated"
+    ) {
+      const entity = payload.payment?.entity || payload.order?.entity || payload.subscription?.entity;
+      const notes = entity?.notes || payload.order?.entity?.notes || payload.payment?.entity?.notes || {};
       const userId = notes.userId;
       const planCode = notes.planCode;
 
       if (userId && planCode) {
         await processCheckoutSession(userId, planCode, "razorpay", notes.couponCode, {
-          paymentId: entity.id,
-          subscriptionId: entity.subscription_id || entity.id,
+          orderId: payload.order?.entity?.id || entity.order_id,
+          paymentId: payload.payment?.entity?.id || (entity.id?.startsWith("pay_") ? entity.id : undefined),
+          subscriptionId: entity.subscription_id || (entity.id?.startsWith("sub_") ? entity.id : undefined),
         });
       }
-        } else if (eventType === "subscription.cancelled" || eventType === "subscription.completed") {
+    } else if (eventType === "subscription.cancelled" || eventType === "subscription.completed") {
       const subEntity = payload.subscription?.entity;
       const subId = subEntity?.id;
       if (subId) {
@@ -656,41 +682,51 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
       if (notes.userId) {
         const existingTxn = await PaymentTransaction.findOne({ transactionId: txnId });
         if (!existingTxn) {
-          await PaymentTransaction.create({
-            userId: notes.userId,
-            amount: (paymentEntity.amount || 0) / 100,
-            currency: paymentEntity.currency || "INR",
-            provider: "razorpay",
-            transactionId: txnId,
-            providerPaymentId: paymentEntity?.id,
-            status: "failed",
-            type: "checkout",
-            paymentMethod: paymentEntity?.method || "card",
-            metadata: { error: paymentEntity?.error_description },
-          });
+          try {
+            await PaymentTransaction.create({
+              userId: notes.userId,
+              amount: (paymentEntity.amount || 0) / 100,
+              currency: paymentEntity.currency || "INR",
+              provider: "razorpay",
+              transactionId: txnId,
+              providerPaymentId: paymentEntity?.id,
+              status: "failed",
+              type: "checkout",
+              paymentMethod: paymentEntity?.method || "card",
+              metadata: { error: paymentEntity?.error_description },
+            });
+          } catch (e) {}
         }
       }
     }
 
-    await WebhookEvent.create({
-      provider: "razorpay",
-      eventId,
-      eventType,
-      payload: eventData,
-      status: "processed",
-      processedAt: new Date(),
-    });
+    try {
+      await WebhookEvent.create({
+        provider: "razorpay",
+        eventId,
+        eventType,
+        payload: eventData,
+        status: "processed",
+        processedAt: new Date(),
+      });
+    } catch (e: any) {
+      if (e.code === 11000 || e.message?.includes("E11000")) {
+        return { received: true, status: "already_processed" };
+      }
+    }
 
     return { received: true, status: "processed" };
   } catch (err: any) {
-    await WebhookEvent.create({
-      provider: "razorpay",
-      eventId,
-      eventType,
-      payload: eventData,
-      status: "failed",
-      processedAt: new Date(),
-    });
+    try {
+      await WebhookEvent.create({
+        provider: "razorpay",
+        eventId,
+        eventType,
+        payload: eventData,
+        status: "failed",
+        processedAt: new Date(),
+      });
+    } catch (e) {}
     throw err;
   }
 }
