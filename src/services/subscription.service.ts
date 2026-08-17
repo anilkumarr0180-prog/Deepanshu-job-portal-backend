@@ -1,7 +1,7 @@
-import { createNotification } from "./notification.service";
+﻿import { createNotification } from "./notification.service";
 import { NOTIFICATION_TYPES } from "../constants/notification-type";
 import { sendSubscriptionReceiptEmail } from "./email.service";
-﻿import Types from "mongoose";
+import Types from "mongoose";
 import crypto from "crypto";
 import SubscriptionPlan, { ISubscriptionPlan } from "../models/subscription-plan.model";
 import Subscription, { ISubscription } from "../models/subscription.model";
@@ -138,7 +138,7 @@ export const DEFAULT_PLANS = [
     currency: "INR",
     billingPeriod: "monthly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE,      features: {
+    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE, features: {
       jobLimit: -1,
       featuredJobLimit: 10,
       inmailCredits: -1,
@@ -514,7 +514,7 @@ export async function processCheckoutSession(
       if (existingTxn) {
         // Clean up redundant duplicate subscription created during this race
         if (newSubscription && newSubscription._id.toString() !== existingTxn.subscriptionId?.toString()) {
-          await Subscription.findByIdAndDelete(newSubscription._id).catch(() => {});
+          await Subscription.findByIdAndDelete(newSubscription._id).catch(() => { });
         }
         const existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
         if (existingSub && existingSub.status !== "active") {
@@ -726,7 +726,7 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
               paymentMethod: paymentEntity?.method || "card",
               metadata: { error: paymentEntity?.error_description },
             });
-          } catch (e) {}
+          } catch (e) { }
         }
       }
     }
@@ -757,7 +757,7 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
         status: "failed",
         processedAt: new Date(),
       });
-    } catch (e) {}
+    } catch (e) { }
     throw err;
   }
 }

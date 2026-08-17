@@ -10,6 +10,15 @@ import {
   verifyCompany,
   getSmtpStatus,
   sendTestEmailController,
+  getFinanceOverviewController,
+  getAdminTransactionsController,
+  getAdminPlansController,
+  createAdminPlanController,
+  updateAdminPlanController,
+  getAdminCouponsController,
+  createAdminCouponController,
+  toggleAdminCouponController,
+  overrideUserSubscriptionController,
 } from "../controllers/admin.controller";
 
 
@@ -140,6 +149,75 @@ router.post(
   authMiddleware,
   authorize(USER_ROLES.ADMIN),
   sendTestEmailController
+);
+
+/*
+|--------------------------------------------------------------------------
+| Financial & Billing Command Center Routes
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/finance/overview",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  getFinanceOverviewController
+);
+
+router.get(
+  "/finance/transactions",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  getAdminTransactionsController
+);
+
+router.get(
+  "/finance/plans",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  getAdminPlansController
+);
+
+router.post(
+  "/finance/plans",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  createAdminPlanController
+);
+
+router.put(
+  "/finance/plans/:planId",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  updateAdminPlanController
+);
+
+router.get(
+  "/finance/coupons",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  getAdminCouponsController
+);
+
+router.post(
+  "/finance/coupons",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  createAdminCouponController
+);
+
+router.patch(
+  "/finance/coupons/:couponId/toggle",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  toggleAdminCouponController
+);
+
+router.post(
+  "/finance/subscriptions/override",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  overrideUserSubscriptionController
 );
 
 export default router;
