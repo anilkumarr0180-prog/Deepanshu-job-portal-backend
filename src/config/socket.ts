@@ -373,7 +373,11 @@ export const initSocketServer = (
     |--------------------------------------------------------------------------
     */
     socket.on("disconnect", (reason) => {
-      console.log(`🔌 Socket client disconnected: ${socket.id} (${reason})`);
+      // Differentiate normal client lifecycle (navigating/closing tab) from network issues
+      const isExpectedClosure = reason === "transport close" || reason === "client namespace disconnect";
+      if (process.env.NODE_ENV === "development" || !isExpectedClosure) {
+        console.log(`🔌 Socket client disconnected: ${socket.id} (${reason})`);
+      }
 
       const userSockets = onlineUsersMap.get(userId);
       if (userSockets) {

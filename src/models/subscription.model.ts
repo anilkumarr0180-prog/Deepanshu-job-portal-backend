@@ -5,11 +5,14 @@ export interface ISubscription extends Document {
   planId: Types.ObjectId;
   planCode: string; // Alias snapshot for planCodeSnapshot
   status: "active" | "canceled" | "past_due" | "expired";
+  billingType?: "one_time" | "recurring";
   currentPeriodStart: Date;
   currentPeriodEnd: Date;
   cancelAtPeriodEnd: boolean;
   provider: "internal" | "stripe" | "razorpay" | "mock";
   providerSubscriptionId?: string;
+  providerOrderId?: string;
+  providerPaymentId?: string;
   providerCustomerId?: string;
   usages: {
     jobsPostedCount: number;
@@ -44,6 +47,11 @@ const subscriptionSchema = new Schema<ISubscription>(
       default: "active",
       index: true,
     },
+    billingType: {
+      type: String,
+      enum: ["one_time", "recurring"],
+      default: "one_time",
+    },
     currentPeriodStart: {
       type: Date,
       required: true,
@@ -66,6 +74,15 @@ const subscriptionSchema = new Schema<ISubscription>(
       type: String,
       sparse: true,
       index: true,
+    },
+    providerOrderId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+    providerPaymentId: {
+      type: String,
+      sparse: true,
     },
     providerCustomerId: {
       type: String,

@@ -432,16 +432,26 @@ export async function processCheckoutSession(
     { $set: { status: "canceled", cancelAtPeriodEnd: false } }
   );
 
+  // Determine if this is a recurring subscription (starts with sub_) or a one-time prepaid order
+  const isRecurring = Boolean(
+    razorpayDetails?.subscriptionId &&
+    typeof razorpayDetails.subscriptionId === "string" &&
+    razorpayDetails.subscriptionId.startsWith("sub_")
+  );
+
   const newSubscription = await Subscription.create({
     userId,
     planId: targetPlan._id,
     planCode: targetPlan.code,
     status: "active",
+    billingType: isRecurring ? "recurring" : "one_time",
     currentPeriodStart: new Date(),
     currentPeriodEnd: periodEnd,
     cancelAtPeriodEnd: false,
     provider: providerType,
-    providerSubscriptionId: razorpayDetails?.subscriptionId || razorpayDetails?.orderId,
+    providerSubscriptionId: isRecurring ? razorpayDetails?.subscriptionId : undefined,
+    providerOrderId: razorpayDetails?.orderId,
+    providerPaymentId: razorpayDetails?.paymentId,
     usages: { jobsPostedCount: 0, featuredJobsCount: 0, inmailCreditsUsed: 0 },
   });
 
@@ -705,14 +715,26 @@ export async function cancelUserSubscription(userId: string) {
   if (!activeSub) throw new Error("No active subscription found to cancel");
 
   if (activeSub.planCode.includes("free") || activeSub.provider === "internal") {
+    activeSub.cancelAtPeriodEnd = true;
+    await activeSub.save();
     return activeSub;
   }
 
-  if (activeSub.provider === "razorpay" && activeSub.providerSubscriptionId) {
+  // Only invoke Razorpay Subscriptions API for genuine recurring subscriptions (starting with 'sub_')
+  const isRecurringRazorpay =
+    activeSub.provider === "razorpay" &&
+    typeof activeSub.providerSubscriptionId === "string" &&
+    activeSub.providerSubscriptionId.startsWith("sub_");
+
+  if (isRecurringRazorpay) {
     try {
-      await cancelRazorpaySubscription(activeSub.providerSubscriptionId, true);
+      await cancelRazorpaySubscription(activeSub.providerSubscriptionId!, true);
     } catch (err: any) {
-      console.warn("Razorpay API cancel notice:", err.message);
+      if (err.message?.includes("BAD_REQUEST_ERROR") || err.message?.includes("already cancelled")) {
+        console.warn(`[Billing] Razorpay recurring subscription ${activeSub.providerSubscriptionId} already inactive on gateway.`);
+      } else {
+        console.warn("[Billing] Razorpay API cancel notice:", err.message);
+      }
     }
   }
 

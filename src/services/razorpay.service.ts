@@ -151,6 +151,15 @@ export async function cancelRazorpaySubscription(subscriptionId: string, cancelA
   return await response.json();
 }
 
+function safeCompareSignatures(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a, "utf-8"), Buffer.from(b, "utf-8"));
+  } catch {
+    return false;
+  }
+}
+
 export function verifyPaymentSignature(params: {
   orderId?: string;
   paymentId: string;
@@ -181,7 +190,7 @@ export function verifyPaymentSignature(params: {
     .update(textToSign)
     .digest("hex");
 
-  return generatedSignature === params.signature;
+  return safeCompareSignatures(generatedSignature, params.signature);
 }
 
 export function verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean {
@@ -195,7 +204,7 @@ export function verifyWebhookSignature(rawBody: string | Buffer, signature: stri
     .update(rawBody)
     .digest("hex");
 
-  if (expectedSignature === signature) {
+  if (safeCompareSignatures(expectedSignature, signature)) {
     return true;
   }
 
