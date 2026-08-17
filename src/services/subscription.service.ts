@@ -1,3 +1,6 @@
+import { createNotification } from "./notification.service";
+import { NOTIFICATION_TYPES } from "../constants/notification-type";
+import { sendSubscriptionReceiptEmail } from "./email.service";
 ﻿import Types from "mongoose";
 import crypto from "crypto";
 import SubscriptionPlan, { ISubscriptionPlan } from "../models/subscription-plan.model";
@@ -135,7 +138,89 @@ export const DEFAULT_PLANS = [
     currency: "INR",
     billingPeriod: "monthly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE,
+    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE,      features: {
+      jobLimit: -1,
+      featuredJobLimit: 10,
+      inmailCredits: -1,
+      candidateSearchAccess: true,
+      analyticsLevel: "enterprise",
+      prioritySupport: true,
+    },
+    isActive: true,
+    isPopular: false,
+  },
+  {
+    code: "candidate_pro_yearly",
+    name: "Career Pro (Annual)",
+    description: "Level up your job search with InMail credits, advanced analytics & unlimited saved jobs for 1 full year.",
+    targetRole: "candidate",
+    price: 950,
+    currency: "INR",
+    billingPeriod: "yearly",
+    provider: "razorpay",
+    providerPlanId: env.RAZORPAY_PLAN_CANDIDATE_PRO_YEARLY,
+    features: {
+      jobLimit: -1,
+      savedJobsLimit: -1,
+      topApplicantBadge: false,
+      inmailCredits: 3,
+      prioritySupport: false,
+      analyticsLevel: "advanced",
+    },
+    isActive: true,
+    isPopular: false,
+  },
+  {
+    code: "candidate_premium_yearly",
+    name: "Career Premium (Annual)",
+    description: "Stand out to recruiters with Top Applicant badge, priority application listing, & InMail credits for 1 full year.",
+    targetRole: "candidate",
+    price: 2899,
+    currency: "INR",
+    billingPeriod: "yearly",
+    provider: "razorpay",
+    providerPlanId: env.RAZORPAY_PLAN_CANDIDATE_PREMIUM_YEARLY,
+    features: {
+      jobLimit: -1,
+      savedJobsLimit: -1,
+      topApplicantBadge: true,
+      inmailCredits: 5,
+      prioritySupport: true,
+      analyticsLevel: "advanced",
+    },
+    isActive: true,
+    isPopular: true,
+  },
+  {
+    code: "recruiter_lite_yearly",
+    name: "Recruiter Lite (Annual)",
+    description: "Ideal for growing teams posting multiple active jobs and boosting top hires for 1 full year.",
+    targetRole: "recruiter",
+    price: 9599,
+    currency: "INR",
+    billingPeriod: "yearly",
+    provider: "razorpay",
+    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_LITE_YEARLY,
+    features: {
+      jobLimit: 5,
+      featuredJobLimit: 2,
+      inmailCredits: 30,
+      candidateSearchAccess: true,
+      analyticsLevel: "advanced",
+    },
+    isActive: true,
+    isPopular: true,
+  },
+  {
+    code: "recruiter_enterprise_yearly",
+    name: "Recruiter Enterprise (Annual)",
+    description: "Unlimited hiring scale with 10 Featured Job slots, unlimited candidate search & priority support for 1 full year.",
+    targetRole: "recruiter",
+    price: 8699,
+    currency: "INR",
+    billingPeriod: "yearly",
+    provider: "razorpay",
+    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE_YEARLY,
     features: {
       jobLimit: -1,
       featuredJobLimit: 10,
@@ -189,6 +274,7 @@ export async function seedDefaultPlans() {
           $set: {
             name: planData.name,
             description: planData.description,
+            targetRole: planData.targetRole,
             price: planData.price,
             currency: planData.currency,
             billingPeriod: planData.billingPeriod,
@@ -382,6 +468,39 @@ export async function processCheckoutSession(
       couponUsed: appliedCoupon?.code,
     },
   });
+
+  const invoiceNumber = `INV-${new Date().getFullYear()}-${transaction._id.toString().substring(18).toUpperCase()}`;
+
+  // 1. Real-time In-App Notification & Socket Event
+  createNotification({
+    recipientId: user._id.toString(),
+    type: NOTIFICATION_TYPES.SYSTEM_ALERT,
+    title: "Subscription Activated! 🎉",
+    body: `Payment of ₹${finalAmount.toLocaleString("en-IN")} for ${targetPlan.name} was successful. Your ${targetPlan.billingPeriod} plan is now live!`,
+    link: user.role === "recruiter" ? "/recruiter/billing" : "/candidate/billing",
+    metadata: {
+      transactionId: transaction._id,
+      planCode: targetPlan.code,
+      invoiceNumber,
+      amount: finalAmount,
+    },
+  }).catch((err) => console.error("Realtime notification dispatch notice:", err));
+
+  // 2. Automated Email Receipt via Nodemailer
+  sendSubscriptionReceiptEmail({
+    userName: user.name || "Customer",
+    userEmail: user.email,
+    planName: targetPlan.name,
+    planCode: targetPlan.code,
+    billingPeriod: targetPlan.billingPeriod,
+    amount: finalAmount,
+    currency: targetPlan.currency || "INR",
+    transactionId,
+    invoiceNumber,
+    invoiceUrl: transaction.invoiceUrl || `https://jobsbox.com/invoices/${transaction._id}`,
+    expiryDate: periodEnd.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" }),
+    paymentMethod,
+  }).catch((err) => console.error("Subscription receipt email dispatch notice:", err));
 
   const populatedSub = await newSubscription.populate("planId");
 

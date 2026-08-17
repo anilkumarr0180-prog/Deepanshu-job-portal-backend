@@ -8,6 +8,7 @@ import connectDB from "./config/database";
 import { env } from "./config/env";
 import { initSocketServer } from "./config/socket";
 import { initChatNotificationsJob } from "./jobs/chat-notifications.job";
+import { initSubscriptionExpirationJob } from "./jobs/subscription-expiration.job";
 
 function freePort(port: string | number) {
   try {
@@ -65,6 +66,7 @@ const startServer = async () => {
 
     // Initialize background jobs
     initChatNotificationsJob();
+    initSubscriptionExpirationJob();
 
     let isRetrying = false;
     server.on("error", (error: any) => {

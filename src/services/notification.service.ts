@@ -1,3 +1,4 @@
+import { Types } from "mongoose";
 import Notification, { INotification } from "../models/notification.model";
 import { NotificationType } from "../constants/notification-type";
 import { emitNotificationToUser } from "../config/socket";
@@ -6,8 +7,8 @@ import { HTTP_STATUS } from "../constants/http-status";
 import { getPaginationOptions, buildPaginatedResult } from "../utils/pagination";
 
 export interface CreateNotificationInput {
-  recipientId: string;
-  senderId?: string | null;
+  recipientId: string | Types.ObjectId;
+  senderId?: string | Types.ObjectId | null;
   type: NotificationType;
   title: string;
   body: string;
@@ -48,7 +49,7 @@ export const createNotification = async (
   });
 
   // Push real-time Socket.io event to user room
-  emitNotificationToUser(input.recipientId, notification.toJSON(), unreadCount);
+  emitNotificationToUser(input.recipientId.toString(), notification.toJSON(), unreadCount);
 
   return notification;
 };
