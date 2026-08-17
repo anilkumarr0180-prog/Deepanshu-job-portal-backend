@@ -68,7 +68,7 @@ export async function createRazorpaySubscription(params: {
     },
     body: JSON.stringify({
       plan_id: params.planId,
-      total_count: params.totalCount || 120,
+      total_count: params.totalCount || 12,
       quantity: 1,
       customer_notify: params.customerNotify ?? 1,
       notes: params.notes || {},

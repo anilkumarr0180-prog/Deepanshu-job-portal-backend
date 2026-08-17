@@ -723,3 +723,285 @@ export const sendUnreadMessagesEmail = async (
 };
 
 
+
+/*
+|--------------------------------------------------------------------------
+| Send Subscription Payment Receipt Email
+|--------------------------------------------------------------------------
+*/
+export interface SubscriptionReceiptEmailPayload {
+  userName: string;
+  userEmail: string;
+  planName: string;
+  planCode: string;
+  billingPeriod: string;
+  amount: number;
+  currency: string;
+  transactionId: string;
+  invoiceNumber: string;
+  invoiceUrl: string;
+  expiryDate: string;
+  paymentMethod: string;
+}
+
+export const sendSubscriptionReceiptEmail = async (
+  payload: SubscriptionReceiptEmailPayload
+): Promise<boolean> => {
+  const {
+    userName,
+    userEmail,
+    planName,
+    billingPeriod,
+    amount,
+    currency,
+    transactionId,
+    invoiceNumber,
+    expiryDate,
+    paymentMethod,
+  } = payload;
+
+  const from = getFromHeader();
+  const formattedPeriod = billingPeriod === "yearly" ? "Annual" : "Monthly";
+  const formattedAmount = Number(amount).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Payment Receipt - JobsBox</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #030712; color: #f8fafc; margin: 0; padding: 20px; }
+        .wrapper { max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 24px; border: 1px solid #1e293b; overflow: hidden; }
+        .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 36px 30px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
+        .header p { margin: 8px 0 0; font-size: 14px; opacity: 0.9; }
+        .content { padding: 32px 30px; }
+        .badge { display: inline-block; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #34d399; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 20px; }
+        .card { background: #1e293b; border-radius: 16px; padding: 24px; margin-bottom: 24px; border: 1px solid #334155; }
+        .row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #334155; font-size: 14px; }
+        .row:last-child { border-bottom: none; }
+        .label { color: #94a3b8; font-weight: 500; }
+        .value { color: #ffffff; font-weight: 700; text-align: right; }
+        .total-row { display: flex; justify-content: space-between; padding: 16px 0 0; font-size: 18px; font-weight: 800; color: #818cf8; }
+        .button { display: inline-block; width: 100%; box-sizing: border-box; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; text-align: center; padding: 16px; border-radius: 14px; font-size: 15px; font-weight: 700; text-decoration: none; margin-top: 10px; }
+        .footer { padding: 24px 30px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #1e293b; }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <div class="header">
+          <h1>Payment Successful! 🎉</h1>
+          <p>Thank you for subscribing to JobsBox</p>
+        </div>
+        <div class="content">
+          <div style="text-align: center;">
+            <span class="badge">✓ Payment Confirmed</span>
+          </div>
+          <p style="color: #cbd5e1; font-size: 15px; line-height: 1.6; margin-bottom: 24px;">
+            Hi <strong>${userName}</strong>,<br>
+            Your payment for <strong>${planName}</strong> has been successfully processed. Your premium features are active immediately!
+          </p>
+
+          <div class="card">
+            <div class="row">
+              <span class="label">Invoice Number</span>
+              <span class="value">${invoiceNumber}</span>
+            </div>
+            <div class="row">
+              <span class="label">Plan & Cycle</span>
+              <span class="value">${planName} (${formattedPeriod})</span>
+            </div>
+            <div class="row">
+              <span class="label">Transaction ID</span>
+              <span class="value" style="font-family: monospace; font-size: 12px;">${transactionId}</span>
+            </div>
+            <div class="row">
+              <span class="label">Payment Method</span>
+              <span class="value" style="text-transform: capitalize;">${paymentMethod}</span>
+            </div>
+            <div class="row">
+              <span class="label">Valid Until</span>
+              <span class="value">${expiryDate}</span>
+            </div>
+            <div class="total-row">
+              <span>Amount Paid</span>
+              <span>₹${formattedAmount} ${currency}</span>
+            </div>
+          </div>
+
+          <a href="http://localhost:5173/billing" class="button">View Billing & Invoices →</a>
+        </div>
+        <div class="footer">
+          <p>JobsBox Portal • Enterprise Hiring & Career Engine</p>
+          <p>Questions? Contact support at support@jobsbox.com</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const { transporter, isTestAccount } = await getTransporter();
+    const info = await transporter.sendMail({
+      from,
+      to: userEmail,
+      subject: `Payment Receipt for ${planName} [#${invoiceNumber}] - JobsBox`,
+      html,
+    });
+
+    if (isTestAccount) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[Email Preview URL - Subscription Receipt]: ${previewUrl}`);
+    } else {
+      console.log(`[Email Sent] Subscription receipt sent to ${userEmail} (MsgID: ${info.messageId})`);
+    }
+    return true;
+  } catch (error) {
+    console.error("Failed to send subscription receipt email:", error);
+    return false;
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Send Subscription Expiring Soon Warning Email (3-Day Warning)
+|--------------------------------------------------------------------------
+*/
+export const sendSubscriptionExpiringSoonEmail = async (params: {
+  userName: string;
+  userEmail: string;
+  planName: string;
+  expiryDate: string;
+  role: string;
+}): Promise<boolean> => {
+  const { userName, userEmail, planName, expiryDate, role } = params;
+  const from = getFromHeader();
+  const renewalUrl = `http://localhost:5173/${role === "recruiter" ? "recruiter" : "candidate"}/pricing`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #030712; color: #f8fafc; margin: 0; padding: 20px; }
+        .wrapper { max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 24px; border: 1px solid #1e293b; overflow: hidden; }
+        .header { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 32px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 24px; font-weight: 800; }
+        .content { padding: 32px 30px; }
+        .card { background: #1e293b; border-radius: 16px; padding: 20px; margin: 20px 0; border: 1px solid #334155; }
+        .button { display: inline-block; width: 100%; box-sizing: border-box; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; text-align: center; padding: 16px; border-radius: 14px; font-size: 15px; font-weight: 700; text-decoration: none; margin-top: 10px; }
+        .footer { padding: 20px 30px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #1e293b; }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <div class="header">
+          <h1>Subscription Expiring Soon ⏳</h1>
+        </div>
+        <div class="content">
+          <p style="color: #cbd5e1; font-size: 15px; line-height: 1.6;">
+            Hi <strong>${userName}</strong>,<br>
+            Your <strong>${planName}</strong> plan is scheduled to expire on <strong>${expiryDate}</strong> because auto-renewal is turned off.
+          </p>
+          <div class="card">
+            <p style="margin: 0; font-size: 14px; color: #94a3b8;">
+              To avoid losing access to active job slots, candidate resumes, or your top applicant badge, you can renew your plan or re-enable auto-pay at any time.
+            </p>
+          </div>
+          <a href="${renewalUrl}" class="button">Renew Subscription Now →</a>
+        </div>
+        <div class="footer">
+          <p>JobsBox Portal • Questions? Contact support@jobsbox.com</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const { transporter } = await getTransporter();
+    await transporter.sendMail({
+      from,
+      to: userEmail,
+      subject: `Action Required: Your ${planName} subscription expires soon - JobsBox`,
+      html,
+    });
+    console.log(`[Email Sent] Expiration warning sent to ${userEmail}`);
+    return true;
+  } catch (error) {
+    console.error("Failed to send expiration warning email:", error);
+    return false;
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Send Subscription Expired Email
+|--------------------------------------------------------------------------
+*/
+export const sendSubscriptionExpiredEmail = async (params: {
+  userName: string;
+  userEmail: string;
+  planName: string;
+  role: string;
+}): Promise<boolean> => {
+  const { userName, userEmail, planName, role } = params;
+  const from = getFromHeader();
+  const renewalUrl = `http://localhost:5173/${role === "recruiter" ? "recruiter" : "candidate"}/pricing`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #030712; color: #f8fafc; margin: 0; padding: 20px; }
+        .wrapper { max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 24px; border: 1px solid #1e293b; overflow: hidden; }
+        .header { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); padding: 32px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 24px; font-weight: 800; }
+        .content { padding: 32px 30px; }
+        .button { display: inline-block; width: 100%; box-sizing: border-box; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; text-align: center; padding: 16px; border-radius: 14px; font-size: 15px; font-weight: 700; text-decoration: none; margin-top: 10px; }
+        .footer { padding: 20px 30px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #1e293b; }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <div class="header">
+          <h1>Subscription Expired</h1>
+        </div>
+        <div class="content">
+          <p style="color: #cbd5e1; font-size: 15px; line-height: 1.6;">
+            Hi <strong>${userName}</strong>,<br>
+            Your <strong>${planName}</strong> plan has expired, and your account has been reverted to the <strong>Starter Free Plan</strong>.
+          </p>
+          <p style="color: #94a3b8; font-size: 14px;">
+            You can re-upgrade anytime to restore your higher limits and resume receiving candidate applications.
+          </p>
+          <a href="${renewalUrl}" class="button">Re-Upgrade Plan →</a>
+        </div>
+        <div class="footer">
+          <p>JobsBox Portal • Questions? Contact support@jobsbox.com</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const { transporter } = await getTransporter();
+    await transporter.sendMail({
+      from,
+      to: userEmail,
+      subject: `Your ${planName} subscription has expired - JobsBox`,
+      html,
+    });
+    console.log(`[Email Sent] Expiration notice sent to ${userEmail}`);
+    return true;
+  } catch (error) {
+    console.error("Failed to send subscription expired email:", error);
+    return false;
+  }
+};
