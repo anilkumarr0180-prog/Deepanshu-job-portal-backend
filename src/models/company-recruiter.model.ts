@@ -16,13 +16,11 @@ const companyRecruiterSchema = new Schema<ICompanyRecruiter>(
       type: Schema.Types.ObjectId,
       ref: "Company",
       required: true,
-      index: true,
     },
     recruiterProfileId: {
       type: Schema.Types.ObjectId,
       ref: "RecruiterProfile",
       required: true,
-      index: true,
     },
     role: {
       type: String,
@@ -47,6 +45,15 @@ const companyRecruiterSchema = new Schema<ICompanyRecruiter>(
 companyRecruiterSchema.index(
   { companyId: 1, recruiterProfileId: 1 },
   { unique: true }
+);
+
+// Enforce at most ONE active primary recruiter per company
+companyRecruiterSchema.index(
+  { companyId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isPrimary: true, isDeleted: false },
+  }
 );
 
 const CompanyRecruiter = model<ICompanyRecruiter>(

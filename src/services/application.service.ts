@@ -148,14 +148,25 @@ export const applyForJob = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Resume Check (CandidateProfile Source of Truth with User Fallback)           */
+  /* Resume Check & Profile Invariant (CandidateProfile Source of Truth)        */
   /* -------------------------------------------------------------------------- */
 
-  const candidateProfile = await CandidateProfile.findOne({
+  let candidateProfile = await CandidateProfile.findOne({
     userId: applicantId,
-  })
-    .select("phone headline skills resumeUrl resumePublicId resumeFileName")
-    .lean();
+  });
+
+  if (!candidateProfile) {
+    candidateProfile = await CandidateProfile.create({
+      userId: applicantId,
+    });
+  }
+
+  if (candidateProfile.userId.toString() !== applicantId.toString()) {
+    throw new AppError(
+      "Candidate profile ownership mismatch.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
 
   const activeResumeUrl = applicationData.resumeUrl || candidateProfile?.resumeUrl || candidate.resumeUrl;
   const activeResumePublicId = applicationData.resumePublicId || candidateProfile?.resumePublicId;
@@ -191,7 +202,7 @@ export const applyForJob = async (
   const application = await Application.create({
     jobId,
     applicantId,
-    candidateProfileId: candidateProfile?._id,
+    candidateProfileId: candidateProfile._id,
     applicantName: applicationData.applicantName || candidate.name,
     applicantEmail: candidate.email,
     applicantPhone: applicationData.applicantPhone || candidateProfile?.phone || (candidate as any).phone || "",

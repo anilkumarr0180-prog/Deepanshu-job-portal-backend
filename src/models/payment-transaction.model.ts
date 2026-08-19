@@ -6,7 +6,7 @@ export interface IPaymentTransaction extends Document {
   planId?: Types.ObjectId;
   amount: number;
   currency: string;
-  provider: "internal" | "stripe" | "razorpay" | "mock";
+  provider: "internal" | "stripe" | "razorpay" | "polar" | "mock";
   transactionId: string;
   providerOrderId?: string;
   providerPaymentId?: string;
@@ -48,7 +48,7 @@ const paymentTransactionSchema = new Schema<IPaymentTransaction>(
     },
     provider: {
       type: String,
-      enum: ["internal", "stripe", "razorpay", "mock"],
+      enum: ["internal", "stripe", "razorpay", "polar", "mock"],
       default: "razorpay",
     },
     transactionId: {

@@ -29,7 +29,16 @@ const couponSchema = new Schema<ICoupon>(
     discountValue: {
       type: Number,
       required: true,
-      min: 0,
+      min: [0, "Discount value cannot be negative"],
+      validate: {
+        validator: function (this: any, val: number) {
+          if (this.discountType === "percentage") {
+            return val <= 100;
+          }
+          return true;
+        },
+        message: "Percentage discount cannot exceed 100%",
+      },
     },
     maxUses: {
       type: Number,

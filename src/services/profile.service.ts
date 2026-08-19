@@ -46,6 +46,14 @@ export const getProfile = async (userId: string) => {
 
   const safeUser = sanitizeUser(user);
 
+  if (user.role === USER_ROLES.ADMIN) {
+    return {
+      ...safeUser,
+      phone: user.phone || "",
+      profilePicture: user.profilePicture || "",
+    };
+  }
+
   if (user.role === USER_ROLES.RECRUITER) {
     let profile = await RecruiterProfile.findOne({ userId: user._id }).lean();
 
@@ -111,7 +119,17 @@ export const updateProfile = async (
   // Account identity field update (remains on User)
   if (profileData.name !== undefined) {
     user.name = profileData.name;
-    await user.save();
+  }
+  if (profileData.phone !== undefined && user.role === USER_ROLES.ADMIN) {
+    user.phone = profileData.phone;
+  }
+  if (profileData.profilePicture !== undefined && user.role === USER_ROLES.ADMIN) {
+    user.profilePicture = profileData.profilePicture;
+  }
+  await user.save();
+
+  if (user.role === USER_ROLES.ADMIN) {
+    return getProfile(userId);
   }
 
   if (user.role === USER_ROLES.RECRUITER) {

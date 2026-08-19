@@ -198,4 +198,133 @@ export const sendTestEmailController = asyncHandler(
   }
 );
 
-
+/*
+|--------------------------------------------------------------------------
+| Financial & Billing Command Center Controllers
+|--------------------------------------------------------------------------
+*/
+
+export const getFinanceOverviewController = asyncHandler(
+  async (_req: Request, res: Response): Promise<void> => {
+    const data = await adminService.getFinanceOverview();
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Financial overview retrieved successfully.",
+      data,
+    });
+  }
+);
+
+export const getAdminTransactionsController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const data = await adminService.getAdminTransactions(req.query);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Transactions retrieved successfully.",
+      data,
+    });
+  }
+);
+
+export const getAdminPlansController = asyncHandler(
+  async (_req: Request, res: Response): Promise<void> => {
+    const data = await adminService.getAdminPlans();
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Subscription plans retrieved successfully.",
+      data,
+    });
+  }
+);
+
+export const createAdminPlanController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const data = await adminService.createAdminPlan(req.body);
+    res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      message: "Subscription plan created successfully.",
+      data,
+    });
+  }
+);
+
+export const updateAdminPlanController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const data = await adminService.updateAdminPlan(req.params.planId as string, req.body);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Subscription plan updated successfully.",
+      data,
+    });
+  }
+);
+
+export const getAdminCouponsController = asyncHandler(
+  async (_req: Request, res: Response): Promise<void> => {
+    const data = await adminService.getAdminCoupons();
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Coupons retrieved successfully.",
+      data,
+    });
+  }
+);
+
+export const createAdminCouponController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const data = await adminService.createAdminCoupon(req.body);
+    res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      message: "Coupon created successfully.",
+      data,
+    });
+  }
+);
+
+export const toggleAdminCouponController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const data = await adminService.toggleAdminCoupon(req.params.couponId as string);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: `Coupon status toggled to ${data.isActive ? "Active" : "Inactive"}.`,
+      data,
+    });
+  }
+);
+
+export const overrideUserSubscriptionController = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { userId, planCode, durationDays, reason } = req.body;
+    const data = await adminService.overrideUserSubscription(
+      userId,
+      planCode,
+      durationDays,
+      reason
+    );
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "User subscription granted/overridden successfully.",
+      data,
+    });
+  }
+);
+
+
+
+/*
+|--------------------------------------------------------------------------
+| Polar Catalog Sync Controller
+|--------------------------------------------------------------------------
+*/
+import { ensureAllPolarPlans } from "../services/polar-catalog.service";
+
+export const syncPolarCatalogController = asyncHandler(
+  async (_req: Request, res: Response): Promise<void> => {
+    const summary = await ensureAllPolarPlans();
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: `Polar catalog synced! Created ${summary.createdProducts} products, ${summary.createdPrices} prices. Existing: ${summary.existingMappings}. Errors: ${summary.errors}.`,
+      data: summary,
+    });
+  }
+);

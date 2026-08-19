@@ -1,4 +1,4 @@
-﻿import { Request, Response } from "express";
+import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import {
   getSubscriptionPlans,
@@ -10,6 +10,7 @@ import {
   validateCouponCode,
   boostJobToFeatured,
   handleRazorpayWebhookEvent,
+  handlePolarWebhookEvent,
 } from "../services/subscription.service";
 import { generateInvoiceDetails, generateInvoiceHTML } from "../services/invoice.service";
 
@@ -277,5 +278,90 @@ export async function webhookController(req: Request, res: Response): Promise<vo
   } catch (error: any) {
     console.error("Razorpay Webhook processing error:", error.message);
     res.status(400).json({ success: false, message: error.message || "Webhook processing failed" });
+  }
+}
+
+export async function polarWebhookController(req: Request, res: Response): Promise<void> {
+  try {
+    const signature =
+      (req.headers["webhook-signature"] as string) ||
+      (req.headers["x-polar-signature"] as string) ||
+      (req.headers["polar-signature"] as string) ||
+      "";
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+    const eventData = req.body;
+
+    const result = await handlePolarWebhookEvent(rawBody, signature, eventData);
+    res.status(200).json(result);
+  } catch (error: any) {
+    console.error("Polar Webhook processing error:", error.message);
+    res.status(400).json({ success: false, message: error.message || "Polar webhook processing failed" });
+  }
+}
+
+export async function createPolarCheckoutController(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "Unauthorized" });
+      return;
+    }
+
+    const { planCode, couponCode, successUrl } = req.body;
+    if (!planCode) {
+      res.status(400).json({ success: false, message: "planCode is required" });
+      return;
+    }
+
+    const checkoutData = await (await import("../services/subscription.service")).createPolarCheckoutService(
+      userId,
+      planCode,
+      couponCode,
+      successUrl
+    );
+
+    res.status(200).json({
+      success: true,
+      data: checkoutData,
+    });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      message: error.message || "Failed to create Polar checkout",
+    });
+  }
+}
+
+export async function verifyPolarPaymentController(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "Unauthorized" });
+      return;
+    }
+
+    const { checkoutId, planCode, couponCode } = req.body;
+    if (!checkoutId) {
+      res.status(400).json({ success: false, message: "checkoutId is required" });
+      return;
+    }
+
+    const result = await (await import("../services/subscription.service")).verifyPolarPaymentService(
+      userId,
+      checkoutId,
+      planCode,
+      couponCode
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Polar payment verified & subscription activated!",
+      data: result,
+    });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      message: error.message || "Polar payment verification failed",
+    });
   }
 }

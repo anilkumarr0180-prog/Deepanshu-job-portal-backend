@@ -1,11 +1,22 @@
 import { Schema, model, Document } from "mongoose";
 
+export interface IProviderMappings {
+  razorpay?: {
+    planId?: string;
+  };
+  polar?: {
+    productId?: string;
+    priceId?: string;
+  };
+}
+
 export interface ISubscriptionPlan extends Document {
   code: string; // 'candidate_free' | 'candidate_pro' | 'candidate_premium' | 'recruiter_free' | 'recruiter_lite' | 'recruiter_enterprise'
   name: string;
   description: string;
   targetRole: "candidate" | "recruiter";
   price: number;
+  usdPrice?: number;
   currency: string;
   billingPeriod: "monthly" | "yearly";
   features: {
@@ -18,7 +29,10 @@ export interface ISubscriptionPlan extends Document {
     candidateSearchAccess?: boolean;
     savedJobsLimit?: number;
   };
-  provider: "internal" | "stripe" | "razorpay";
+  providerMappings?: IProviderMappings;
+  /** @deprecated Compatibility-only field. Business logic reads providerMappings.razorpay.planId */
+  provider?: "internal" | "stripe" | "razorpay" | "polar";
+  /** @deprecated Compatibility-only field. Business logic reads providerMappings.razorpay.planId */
   providerPlanId?: string;
   isActive: boolean;
   isPopular?: boolean;
@@ -55,6 +69,10 @@ const subscriptionPlanSchema = new Schema<ISubscriptionPlan>(
       required: true,
       min: 0,
     },
+    usdPrice: {
+      type: Number,
+      min: 0,
+    },
     currency: {
       type: String,
       default: "INR",
@@ -75,11 +93,22 @@ const subscriptionPlanSchema = new Schema<ISubscriptionPlan>(
       candidateSearchAccess: { type: Boolean, default: false },
       savedJobsLimit: { type: Number, default: 5 },
     },
+    providerMappings: {
+      razorpay: {
+        planId: { type: String, trim: true },
+      },
+      polar: {
+        productId: { type: String, trim: true },
+        priceId: { type: String, trim: true },
+      },
+    },
+    /** @deprecated Compatibility-only field */
     provider: {
       type: String,
       enum: ["internal", "stripe", "razorpay"],
       default: "razorpay",
     },
+    /** @deprecated Compatibility-only field */
     providerPlanId: {
       type: String,
       sparse: true,

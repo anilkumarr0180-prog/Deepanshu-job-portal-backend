@@ -36,7 +36,8 @@ export const generateUploadSignature = (
   if (
     type === "profile" &&
     role !== USER_ROLES.CANDIDATE &&
-    role !== USER_ROLES.RECRUITER
+    role !== USER_ROLES.RECRUITER &&
+    role !== USER_ROLES.ADMIN
   ) {
     throw new AppError(
       "You are not authorized to upload a profile image.",

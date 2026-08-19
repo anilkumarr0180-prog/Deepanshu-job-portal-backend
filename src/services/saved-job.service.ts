@@ -53,11 +53,21 @@ export const saveJob = async (userId: string, jobId: string) => {
   }
 
   const CandidateProfile = (await import("../models/candidate-profile.model")).default;
-  const candidateProfile = await CandidateProfile.findOne({ userId }).select("_id").lean();
+  let candidateProfile = await CandidateProfile.findOne({ userId });
+  if (!candidateProfile) {
+    candidateProfile = await CandidateProfile.create({ userId });
+  }
+
+  if (candidateProfile.userId.toString() !== userId.toString()) {
+    throw new AppError(
+      "Candidate profile ownership mismatch.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
 
   await SavedJob.create({
     userId,
-    candidateProfileId: candidateProfile?._id,
+    candidateProfileId: candidateProfile._id,
     jobId,
   });
 

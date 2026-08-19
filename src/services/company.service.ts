@@ -1,4 +1,6 @@
 import Company, { ISocialLinks } from "../models/company.model";
+import RecruiterProfile from "../models/recruiter-profile.model";
+import CompanyRecruiter from "../models/company-recruiter.model";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
 import cloudinaryService from "./cloudinary.service";
@@ -7,6 +9,57 @@ import {
   getPaginationOptions,
   buildPaginatedResult,
 } from "../utils/pagination";
+
+// ---------------------------------------------------------------------------
+// Helper: Get Authorized Company for Recruiter (via CompanyRecruiter)
+// ---------------------------------------------------------------------------
+
+export const getAuthorizedCompanyForRecruiter = async (recruiterUserId: string) => {
+  let profile = await RecruiterProfile.findOne({ userId: recruiterUserId });
+  if (!profile) {
+    profile = await RecruiterProfile.create({ userId: recruiterUserId });
+  }
+
+  const companyRecruiter = await CompanyRecruiter.findOne({
+    recruiterProfileId: profile._id,
+    isDeleted: false,
+  });
+
+  if (companyRecruiter) {
+    const company = await Company.findOne({ _id: companyRecruiter.companyId, isDeleted: false });
+    if (company) {
+      return { company, recruiterProfile: profile, companyRecruiter };
+    }
+  }
+
+  // Legacy fallback with auto-healing
+  const legacyCompany = await Company.findOne({ recruiterId: recruiterUserId, isDeleted: false });
+  if (legacyCompany) {
+    let healedCR = await CompanyRecruiter.findOne({
+      companyId: legacyCompany._id,
+      recruiterProfileId: profile._id,
+    });
+    if (!healedCR) {
+      healedCR = await CompanyRecruiter.create({
+        companyId: legacyCompany._id,
+        recruiterProfileId: profile._id,
+        role: "owner",
+        isPrimary: true,
+        isDeleted: false,
+      });
+    } else if (healedCR.isDeleted) {
+      healedCR.isDeleted = false;
+      await healedCR.save();
+    }
+    if (!profile.companyId) {
+      profile.companyId = legacyCompany._id;
+      await profile.save();
+    }
+    return { company: legacyCompany, recruiterProfile: profile, companyRecruiter: healedCR };
+  }
+
+  return null;
+};
 
 // ---------------------------------------------------------------------------
 // Create Company Input
@@ -87,16 +140,18 @@ export const createCompany = async (
   recruiterId: string,
   companyData: CreateCompanyInput
 ) => {
-  // A recruiter can own only one company profile.
-  const existingCompany = await Company.findOne({
-    recruiterId,
-  });
+  const existingAuth = await getAuthorizedCompanyForRecruiter(recruiterId);
 
-  if (existingCompany) {
+  if (existingAuth) {
     throw new AppError(
-      "Recruiter already owns a company profile.",
+      "Recruiter already owns or belongs to a company profile.",
       HTTP_STATUS.BAD_REQUEST
     );
+  }
+
+  let recruiterProfile = await RecruiterProfile.findOne({ userId: recruiterId });
+  if (!recruiterProfile) {
+    recruiterProfile = await RecruiterProfile.create({ userId: recruiterId });
   }
 
   // Normalize email before storing.
@@ -108,16 +163,8 @@ export const createCompany = async (
     name: companyData.name,
     description: companyData.description,
 
-    // -----------------------------------------------------------------------
-    // Cloudinary
-    // -----------------------------------------------------------------------
-
     logo: companyData.logo,
     logoPublicId: companyData.logoPublicId,
-
-    // -----------------------------------------------------------------------
-    // Company Information
-    // -----------------------------------------------------------------------
 
     website: companyData.website,
     industry: companyData.industry,
@@ -136,9 +183,21 @@ export const createCompany = async (
 
     recruiterId,
 
-    // Keep your existing behavior.
     isVerified: true,
   });
+
+  // Authoritative link: CompanyRecruiter
+  await CompanyRecruiter.create({
+    companyId: company._id,
+    recruiterProfileId: recruiterProfile._id,
+    role: "owner",
+    isPrimary: true,
+    isDeleted: false,
+  });
+
+  // Sync compatibility link
+  recruiterProfile.companyId = company._id;
+  await recruiterProfile.save();
 
   return company;
 };
@@ -150,30 +209,35 @@ export const createCompany = async (
 export const getMyCompany = async (
   recruiterId: string
 ) => {
-  const existing = await Company.findOne({
-    recruiterId,
-  });
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
 
-  // Keep your existing verification behavior.
-  if (existing && !existing.isVerified) {
-    existing.isVerified = true;
-    await existing.save();
-  }
-
-  const company = await Company.findOne({
-    recruiterId,
-  })
-    .populate("recruiterId", "name email phone")
-    .lean();
-
-  if (!company) {
+  if (!auth) {
     throw new AppError(
       "Company profile not found.",
       HTTP_STATUS.NOT_FOUND
     );
   }
 
-  return company;
+  const { company } = auth;
+
+  // Keep existing verification behavior.
+  if (!company.isVerified) {
+    company.isVerified = true;
+    await company.save();
+  }
+
+  const companyDoc = await Company.findById(company._id)
+    .populate("recruiterId", "name email phone")
+    .lean();
+
+  if (!companyDoc) {
+    throw new AppError(
+      "Company profile not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
+  }
+
+  return companyDoc;
 };
 
 // ---------------------------------------------------------------------------
@@ -184,20 +248,16 @@ export const updateMyCompany = async (
   recruiterId: string,
   updateData: UpdateCompanyInput
 ) => {
-  // Important:
-  // We identify the company using the authenticated recruiter's ID.
-  // The client does not provide a company ID.
-  const company = await Company.findOne({
-    recruiterId,
-  });
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
 
-  if (!company) {
+  if (!auth) {
     throw new AppError(
       "Company profile not found.",
       HTTP_STATUS.NOT_FOUND
     );
   }
 
+  const company = auth.company;
   const oldLogoPublicId = company.logoPublicId;
 
   // -------------------------------------------------------------------------

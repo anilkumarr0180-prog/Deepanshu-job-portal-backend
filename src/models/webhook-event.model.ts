@@ -1,7 +1,7 @@
 import { Schema, model, Document } from "mongoose";
 
 export interface IWebhookEvent extends Document {
-  provider: "razorpay" | "stripe";
+  provider: "razorpay" | "stripe" | "polar";
   eventId: string;
   eventType: string;
   payload: Record<string, any>;
@@ -15,7 +15,7 @@ const webhookEventSchema = new Schema<IWebhookEvent>(
   {
     provider: {
       type: String,
-      enum: ["razorpay", "stripe"],
+      enum: ["razorpay", "stripe", "polar"],
       required: true,
     },
     eventId: {

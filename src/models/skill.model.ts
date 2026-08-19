@@ -38,7 +38,6 @@ const skillSchema = new Schema<ISkill>(
   }
 );
 
-skillSchema.index({ slug: 1 });
 skillSchema.index({ category: 1 });
 
 const Skill = model<ISkill>("Skill", skillSchema);
