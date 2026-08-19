@@ -32,6 +32,9 @@ export async function generateInvoiceDetails(transactionId: string) {
 }
 
 export function generateInvoiceHTML(invoice: any): string {
+  const isUSD = (invoice.currency || "").toUpperCase() === "USD";
+  const symbol = isUSD ? "$" : "₹";
+  const locale = isUSD ? "en-US" : "en-IN";
   const subtotal = Number((invoice.amount / 1.18).toFixed(2));
   const gst = Number((invoice.amount - subtotal).toFixed(2));
 
@@ -92,7 +95,7 @@ export function generateInvoiceHTML(invoice: any): string {
           <div class="invoice-meta">
             <div class="invoice-title">TAX INVOICE</div>
             <div class="invoice-id">#${invoice.invoiceNumber}</div>
-            <p style="font-size: 12px; color: #64748b; margin-top: 4px;">Date: ${new Date(invoice.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+            <p style="font-size: 12px; color: #64748b; margin-top: 4px;">Date: ${new Date(invoice.date).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
           </div>
         </div>
 
@@ -125,7 +128,7 @@ export function generateInvoiceHTML(invoice: any): string {
                 <div style="font-size: 12px; color: #64748b; margin-top: 2px;">${invoice.plan.description}</div>
               </td>
               <td>${invoice.plan.billingPeriod}</td>
-              <td style="text-align: right; font-weight: 700;">₹${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+              <td style="text-align: right; font-weight: 700;">${symbol}${subtotal.toLocaleString(locale, { minimumFractionDigits: 2 })}</td>
             </tr>
           </tbody>
         </table>
@@ -134,15 +137,15 @@ export function generateInvoiceHTML(invoice: any): string {
           <div class="totals-box">
             <div class="totals-row">
               <span>Subtotal</span>
-              <span>₹${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              <span>${symbol}${subtotal.toLocaleString(locale, { minimumFractionDigits: 2 })}</span>
             </div>
             <div class="totals-row">
               <span>GST (18%)</span>
-              <span>₹${gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              <span>${symbol}${gst.toLocaleString(locale, { minimumFractionDigits: 2 })}</span>
             </div>
             <div class="totals-row final">
               <span>Total Paid</span>
-              <span>₹${Number(invoice.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${invoice.currency}</span>
+              <span>${symbol}${Number(invoice.amount).toLocaleString(locale, { minimumFractionDigits: 2 })} ${invoice.currency}</span>
             </div>
           </div>
         </div>

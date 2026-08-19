@@ -1,4 +1,4 @@
-﻿import type { StringValue } from "ms";
+import type { StringValue } from "ms";
 
 /*
 |--------------------------------------------------------------------------
@@ -117,7 +117,12 @@ export const env = {
   RAZORPAY_KEY_SECRET: (RAZORPAY_KEY_SECRET || "").trim(),
   RAZORPAY_WEBHOOK_SECRET: (RAZORPAY_WEBHOOK_SECRET || "").trim(),
   RAZORPAY_PLAN_RECRUITER_LITE: (RAZORPAY_PLAN_RECRUITER_LITE || "plan_TPa2Xb7jpp0YDp").trim(),
-    RAZORPAY_PLAN_RECRUITER_ENTERPRISE: (RAZORPAY_PLAN_RECRUITER_ENTERPRISE || "plan_TPYTyC7GecJmdC").trim(),
+  RAZORPAY_PLAN_RECRUITER_ENTERPRISE: (RAZORPAY_PLAN_RECRUITER_ENTERPRISE || "plan_TPYTyC7GecJmdC").trim(),
   RAZORPAY_PLAN_CANDIDATE_PRO: (process.env.RAZORPAY_PLAN_CANDIDATE_PRO || "plan_TPc0Up5ZDc7IGE").trim(),
   RAZORPAY_PLAN_CANDIDATE_PREMIUM: (process.env.RAZORPAY_PLAN_CANDIDATE_PREMIUM || "plan_TPc3dSn8XUWR2j").trim(),
+
+  // Polar
+  POLAR_ACCESS_TOKEN: (process.env.POLAR_ACCESS_TOKEN || "").trim(),
+  POLAR_SERVER_URL: (process.env.POLAR_SERVER_URL || "https://sandbox-api.polar.sh").trim(),
+  POLAR_WEBHOOK_SECRET: (process.env.POLAR_WEBHOOK_SECRET || "").trim(),
 };

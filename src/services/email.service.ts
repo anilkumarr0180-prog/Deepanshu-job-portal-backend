@@ -762,7 +762,10 @@ export const sendSubscriptionReceiptEmail = async (
 
   const from = getFromHeader();
   const formattedPeriod = billingPeriod === "yearly" ? "Annual" : "Monthly";
-  const formattedAmount = Number(amount).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+  const isUSD = (currency || "").toUpperCase() === "USD";
+  const symbol = isUSD ? "$" : "₹";
+  const locale = isUSD ? "en-US" : "en-IN";
+  const formattedAmount = Number(amount).toLocaleString(locale, { minimumFractionDigits: 2 });
 
   const html = `
     <!DOCTYPE html>
@@ -827,7 +830,7 @@ export const sendSubscriptionReceiptEmail = async (
             </div>
             <div class="total-row">
               <span>Amount Paid</span>
-              <span>₹${formattedAmount} ${currency}</span>
+              <span>${symbol}${formattedAmount} ${currency}</span>
             </div>
           </div>
 

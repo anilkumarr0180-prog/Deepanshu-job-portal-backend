@@ -19,6 +19,7 @@ import {
   createAdminCouponController,
   toggleAdminCouponController,
   overrideUserSubscriptionController,
+  syncPolarCatalogController,
 } from "../controllers/admin.controller";
 
 
@@ -169,6 +170,13 @@ router.get(
   authMiddleware,
   authorize(USER_ROLES.ADMIN),
   getAdminTransactionsController
+);
+
+router.post(
+  "/finance/plans/sync-polar",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  syncPolarCatalogController
 );
 
 router.get(

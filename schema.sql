@@ -62,7 +62,7 @@ CREATE TABLE recruiter_profiles (
 );
 
 -- ==========================================================
--- 4. COMPANY RECRUITERS (Junction)
+-- 4. COMPANY RECRUITERS (Canonical Junction)
 -- ==========================================================
 CREATE TABLE company_recruiters (
     id UUID PRIMARY KEY,
@@ -70,9 +70,13 @@ CREATE TABLE company_recruiters (
     recruiter_profile_id UUID NOT NULL REFERENCES recruiter_profiles(id) ON DELETE CASCADE,
     role VARCHAR(50) DEFAULT 'recruiter',
     is_primary BOOLEAN DEFAULT FALSE,
+    is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX idx_company_recruiters_pair ON company_recruiters (company_id, recruiter_profile_id);
+CREATE UNIQUE INDEX idx_company_primary_recruiter ON company_recruiters (company_id) WHERE is_primary = TRUE AND is_deleted = FALSE;
 
 -- ==========================================================
 -- 5. CANDIDATE PROFILES
@@ -187,29 +191,46 @@ CREATE TABLE job_skills (
 );
 
 -- ==========================================================
--- 12. JOB APPLICATIONS
+-- 12. JOB APPLICATIONS (With Historical Point-in-Time Snapshots)
 -- ==========================================================
 CREATE TABLE job_applications (
     id UUID PRIMARY KEY,
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    applicant_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     candidate_profile_id UUID NOT NULL REFERENCES candidate_profiles(id) ON DELETE CASCADE,
+    applicant_name VARCHAR(150),
+    applicant_email VARCHAR(255),
+    applicant_phone VARCHAR(50),
+    applicant_designation VARCHAR(150),
+    experience_years NUMERIC(4,1) DEFAULT 0,
+    relevant_skills JSONB DEFAULT '[]',
+    notice_period VARCHAR(50),
     resume_url TEXT NOT NULL,
+    resume_public_id TEXT,
+    resume_file_name VARCHAR(255),
     cover_letter TEXT,
+    interview_details JSONB DEFAULT '{}',
     status VARCHAR(50) DEFAULT 'applied',
+    is_deleted BOOLEAN DEFAULT FALSE,
     deleted_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX idx_unique_job_applicant ON job_applications (job_id, applicant_id);
 
 -- ==========================================================
 -- 13. SAVED JOBS
 -- ==========================================================
 CREATE TABLE saved_jobs (
     id UUID PRIMARY KEY,
-    candidate_profile_id UUID NOT NULL REFERENCES candidate_profiles(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    candidate_profile_id UUID REFERENCES candidate_profiles(id) ON DELETE CASCADE,
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX idx_unique_saved_job ON saved_jobs (user_id, job_id);
 
 -- ==========================================================
 -- 14. SUBSCRIPTION PLANS
@@ -255,6 +276,8 @@ CREATE TABLE subscriptions (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX idx_unique_active_user_subscription ON subscriptions (user_id) WHERE status = 'active';
+
 -- ==========================================================
 -- 16. PAYMENT TRANSACTIONS
 -- ==========================================================
@@ -295,6 +318,8 @@ CREATE TABLE webhook_events (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX idx_webhook_events_provider_event ON webhook_events (provider, event_id);
+
 -- ==========================================================
 -- 18. COUPONS
 -- ==========================================================
@@ -302,7 +327,7 @@ CREATE TABLE coupons (
     id UUID PRIMARY KEY,
     code VARCHAR(50) NOT NULL UNIQUE,
     discount_type VARCHAR(20) DEFAULT 'percentage',
-    discount_value NUMERIC(10,2) NOT NULL DEFAULT 0,
+    discount_value NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (discount_type != 'percentage' OR discount_value <= 100),
     max_uses INTEGER DEFAULT -1,
     times_used INTEGER DEFAULT 0,
     expires_at TIMESTAMP,

@@ -309,4 +309,22 @@ export const overrideUserSubscriptionController = asyncHandler(
   }
 );
 
-
+
+
+/*
+|--------------------------------------------------------------------------
+| Polar Catalog Sync Controller
+|--------------------------------------------------------------------------
+*/
+import { ensureAllPolarPlans } from "../services/polar-catalog.service";
+
+export const syncPolarCatalogController = asyncHandler(
+  async (_req: Request, res: Response): Promise<void> => {
+    const summary = await ensureAllPolarPlans();
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: `Polar catalog synced! Created ${summary.createdProducts} products, ${summary.createdPrices} prices. Existing: ${summary.existingMappings}. Errors: ${summary.errors}.`,
+      data: summary,
+    });
+  }
+);

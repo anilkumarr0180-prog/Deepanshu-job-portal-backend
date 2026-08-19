@@ -1,7 +1,7 @@
-﻿import { createNotification } from "./notification.service";
+import { createNotification } from "./notification.service";
 import { NOTIFICATION_TYPES } from "../constants/notification-type";
 import { sendSubscriptionReceiptEmail } from "./email.service";
-import Types from "mongoose";
+import mongoose, { Types } from "mongoose";
 import crypto from "crypto";
 import SubscriptionPlan, { ISubscriptionPlan } from "../models/subscription-plan.model";
 import Subscription, { ISubscription } from "../models/subscription.model";
@@ -21,6 +21,15 @@ import {
   verifyWebhookSignature,
   cancelRazorpaySubscription,
 } from "./razorpay.service";
+import {
+  createPolarCheckout,
+  fetchPolarCheckout,
+  getPolarPlanPriceId,
+  resolveOrProvisionPolarPriceId,
+  verifyPolarWebhookSignature,
+  getPolarCredentials,
+  findActivePolarSubscriptionByEmail,
+} from "./polar.service";
 
 /**
  * Enterprise Subscription Service
@@ -37,6 +46,7 @@ export const DEFAULT_PLANS = [
     currency: "INR",
     billingPeriod: "monthly",
     provider: "internal",
+    providerMappings: {},
     features: {
       jobLimit: -1,
       savedJobsLimit: 5,
@@ -51,13 +61,16 @@ export const DEFAULT_PLANS = [
   {
     code: "candidate_pro",
     name: "Career Pro",
+    usdPrice: 2,
     description: "Level up your job search with InMail credits, advanced analytics & unlimited saved jobs.",
     targetRole: "candidate",
     price: 99,
     currency: "INR",
     billingPeriod: "monthly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_CANDIDATE_PRO,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_CANDIDATE_PRO },
+    },
     features: {
       jobLimit: -1,
       savedJobsLimit: -1,
@@ -72,13 +85,16 @@ export const DEFAULT_PLANS = [
   {
     code: "candidate_premium",
     name: "Career Premium",
+    usdPrice: 4,
     description: "Stand out to recruiters with Top Applicant badge, priority application listing, & InMail credits.",
     targetRole: "candidate",
     price: 299,
     currency: "INR",
     billingPeriod: "monthly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_CANDIDATE_PREMIUM,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_CANDIDATE_PREMIUM },
+    },
     features: {
       jobLimit: -1,
       savedJobsLimit: -1,
@@ -99,6 +115,7 @@ export const DEFAULT_PLANS = [
     currency: "INR",
     billingPeriod: "monthly",
     provider: "internal",
+    providerMappings: {},
     features: {
       jobLimit: 1,
       featuredJobLimit: 0,
@@ -112,13 +129,16 @@ export const DEFAULT_PLANS = [
   {
     code: "recruiter_lite",
     name: "Recruiter Lite",
+    usdPrice: 15,
     description: "Ideal for growing teams posting multiple active jobs and boosting top hires.",
     targetRole: "recruiter",
     price: 999,
     currency: "INR",
     billingPeriod: "monthly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_LITE,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_RECRUITER_LITE },
+    },
     features: {
       jobLimit: 5,
       featuredJobLimit: 2,
@@ -132,13 +152,17 @@ export const DEFAULT_PLANS = [
   {
     code: "recruiter_enterprise",
     name: "Recruiter Enterprise",
+    usdPrice: 99,
     description: "Unlimited hiring scale with 10 Featured Job slots, unlimited candidate search & priority support.",
     targetRole: "recruiter",
     price: 8999,
     currency: "INR",
     billingPeriod: "monthly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE, features: {
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE },
+    },
+    features: {
       jobLimit: -1,
       featuredJobLimit: 10,
       inmailCredits: -1,
@@ -152,13 +176,16 @@ export const DEFAULT_PLANS = [
   {
     code: "candidate_pro_yearly",
     name: "Career Pro (Annual)",
+    usdPrice: 19,
     description: "Level up your job search with InMail credits, advanced analytics & unlimited saved jobs for 1 full year.",
     targetRole: "candidate",
     price: 950,
     currency: "INR",
     billingPeriod: "yearly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_CANDIDATE_PRO_YEARLY,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_CANDIDATE_PRO_YEARLY },
+    },
     features: {
       jobLimit: -1,
       savedJobsLimit: -1,
@@ -173,13 +200,16 @@ export const DEFAULT_PLANS = [
   {
     code: "candidate_premium_yearly",
     name: "Career Premium (Annual)",
+    usdPrice: 39,
     description: "Stand out to recruiters with Top Applicant badge, priority application listing, & InMail credits for 1 full year.",
     targetRole: "candidate",
     price: 2899,
     currency: "INR",
     billingPeriod: "yearly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_CANDIDATE_PREMIUM_YEARLY,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_CANDIDATE_PREMIUM_YEARLY },
+    },
     features: {
       jobLimit: -1,
       savedJobsLimit: -1,
@@ -194,13 +224,16 @@ export const DEFAULT_PLANS = [
   {
     code: "recruiter_lite_yearly",
     name: "Recruiter Lite (Annual)",
+    usdPrice: 149,
     description: "Ideal for growing teams posting multiple active jobs and boosting top hires for 1 full year.",
     targetRole: "recruiter",
     price: 9599,
     currency: "INR",
     billingPeriod: "yearly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_LITE_YEARLY,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_RECRUITER_LITE_YEARLY },
+    },
     features: {
       jobLimit: 5,
       featuredJobLimit: 2,
@@ -214,13 +247,16 @@ export const DEFAULT_PLANS = [
   {
     code: "recruiter_enterprise_yearly",
     name: "Recruiter Enterprise (Annual)",
+    usdPrice: 799,
     description: "Unlimited hiring scale with 10 Featured Job slots, unlimited candidate search & priority support for 1 full year.",
     targetRole: "recruiter",
-    price: 8699,
+    price: 86990,
     currency: "INR",
     billingPeriod: "yearly",
     provider: "razorpay",
-    providerPlanId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE_YEARLY,
+    providerMappings: {
+      razorpay: { planId: env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE_YEARLY },
+    },
     features: {
       jobLimit: -1,
       featuredJobLimit: 10,
@@ -233,6 +269,22 @@ export const DEFAULT_PLANS = [
     isPopular: false,
   },
 ];
+
+/**
+ * Resolves the Razorpay Plan ID strictly from providerMappings.razorpay.planId (NEW CANONICAL SOURCE OF TRUTH).
+ * Free plans (price === 0) do not require a Razorpay mapping and return undefined.
+ * Throws an explicit error if a paid plan lacks a Razorpay provider mapping.
+ */
+export function getRazorpayPlanId(plan: ISubscriptionPlan): string | undefined {
+  if (plan.price === 0 || plan.code.includes("free")) {
+    return undefined;
+  }
+  const planId = plan.providerMappings?.razorpay?.planId;
+  if (!planId) {
+    throw new Error(`Paid plan '${plan.code}' does not have a valid Razorpay provider mapping (providerMappings.razorpay.planId missing).`);
+  }
+  return planId;
+}
 
 export async function seedDefaultCoupons() {
   try {
@@ -253,7 +305,6 @@ export async function seedDefaultCoupons() {
 }
 
 export async function validateCouponCode(code: string) {
-  await seedDefaultCoupons();
   const coupon = await Coupon.findOne({ code: code.toUpperCase(), isActive: true });
   if (!coupon) throw new Error("Invalid or expired promo code");
   if (coupon.expiresAt && coupon.expiresAt < new Date()) {
@@ -265,26 +316,69 @@ export async function validateCouponCode(code: string) {
   return coupon;
 }
 
+/**
+ * Concurrency-Safe Atomic Coupon Consumption
+ */
+export async function consumeCouponCode(code: string, session?: mongoose.ClientSession) {
+  const normalizedCode = code.trim().toUpperCase();
+
+  const coupon = await Coupon.findOneAndUpdate(
+    {
+      code: normalizedCode,
+      isActive: true,
+      $and: [
+        { $or: [{ expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }] },
+        { $or: [{ maxUses: -1 }, { $expr: { $lt: ["$timesUsed", "$maxUses"] } }] },
+      ],
+    },
+    { $inc: { timesUsed: 1 } },
+    { session, returnDocument: "after" }
+  );
+
+  if (!coupon) {
+    const existing = await Coupon.findOne({ code: normalizedCode }, null, { session });
+    if (!existing || !existing.isActive) {
+      throw new Error("Invalid or inactive promo code");
+    }
+    if (existing.expiresAt && existing.expiresAt < new Date()) {
+      throw new Error("Promo code has expired");
+    }
+    if (existing.maxUses !== -1 && existing.timesUsed >= existing.maxUses) {
+      throw new Error("Promo code usage limit reached");
+    }
+    throw new Error("Invalid promo code");
+  }
+
+  return coupon;
+}
+
 export async function seedDefaultPlans() {
   try {
+    await seedDefaultCoupons();
     for (const planData of DEFAULT_PLANS) {
+      const canonicalRazorpayId = planData.providerMappings?.razorpay?.planId;
+      const setPayload: Record<string, any> = {
+        name: planData.name,
+        usdPrice: (planData as any).usdPrice,
+        description: planData.description,
+        targetRole: planData.targetRole,
+        price: planData.price,
+        currency: planData.currency,
+        billingPeriod: planData.billingPeriod,
+        provider: planData.provider,
+        providerPlanId: canonicalRazorpayId,
+        features: planData.features,
+        isActive: planData.isActive,
+        isPopular: planData.isPopular,
+      };
+
+      if (planData.providerMappings?.razorpay) {
+        setPayload["providerMappings.razorpay"] = planData.providerMappings.razorpay;
+      }
+
       await SubscriptionPlan.findOneAndUpdate(
         { code: planData.code },
-        {
-          $set: {
-            name: planData.name,
-            description: planData.description,
-            targetRole: planData.targetRole,
-            price: planData.price,
-            currency: planData.currency,
-            billingPeriod: planData.billingPeriod,
-            provider: planData.provider,
-            providerPlanId: (planData as any).providerPlanId,
-            features: planData.features,
-            isActive: planData.isActive,
-            isPopular: planData.isPopular,
-          },
-        },
+        { $set: setPayload },
         { upsert: true, returnDocument: "after" }
       );
     }
@@ -374,28 +468,40 @@ export async function getUserSubscriptionDetails(userId: string) {
       isDeleted: false,
     });
 
-    subscription.usages.jobsPostedCount = activeJobsCount;
-    subscription.usages.featuredJobsCount = featuredJobsCount;
+    const plan = subscription.planId as unknown as ISubscriptionPlan;
+
+    return {
+      subscription,
+      plan,
+      usages: {
+        activeJobsCount,
+        featuredJobsCount,
+        jobLimit: plan?.features?.jobLimit ?? 1,
+        featuredJobLimit: plan?.features?.featuredJobLimit ?? 0,
+        inmailCredits: plan?.features?.inmailCredits ?? 0,
+        candidateSearchAccess: plan?.features?.candidateSearchAccess ?? false,
+      },
+    };
   }
 
-  return {
-    subscription,
-    plan: subscription ? subscription.planId : null,
-  };
+  const plan = subscription ? (subscription.planId as unknown as ISubscriptionPlan) : null;
+  return { subscription, plan };
 }
 
 /**
- * Process Verified Subscription Activation (One Active Subscription Rule)
+ * Process Verified Subscription Activation (Strict Transactional Execution)
  */
 export async function processCheckoutSession(
   userId: string,
   planCode: string,
   paymentMethod: string = "card",
   couponCode?: string,
-  razorpayDetails?: {
+  providerDetails?: {
     orderId?: string;
     paymentId?: string;
     subscriptionId?: string;
+    checkoutId?: string;
+    provider?: "razorpay" | "polar" | "internal" | "mock";
   }
 ) {
   const user = await User.findById(userId);
@@ -408,24 +514,6 @@ export async function processCheckoutSession(
     throw new Error(`Plan ${targetPlan.name} is intended for ${targetPlan.targetRole}s`);
   }
 
-  let finalAmount = targetPlan.price;
-  let appliedCoupon = null;
-
-  if (couponCode && couponCode.trim()) {
-    try {
-      appliedCoupon = await validateCouponCode(couponCode.trim());
-      if (appliedCoupon.discountType === "percentage") {
-        finalAmount = Math.max(0, finalAmount * (1 - appliedCoupon.discountValue / 100));
-      } else {
-        finalAmount = Math.max(0, finalAmount - appliedCoupon.discountValue);
-      }
-      appliedCoupon.timesUsed += 1;
-      await appliedCoupon.save();
-    } catch (err: any) {
-      console.warn("Invalid coupon applied:", err.message);
-    }
-  }
-
   const periodEnd = new Date();
   if (targetPlan.billingPeriod === "yearly") {
     periodEnd.setFullYear(periodEnd.getFullYear() + 1);
@@ -434,110 +522,141 @@ export async function processCheckoutSession(
   }
 
   const isFreePlan = targetPlan.price === 0;
-  const providerType = isFreePlan ? "internal" : "razorpay";
-  const transactionId = razorpayDetails?.paymentId || razorpayDetails?.orderId || `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const providerType: "internal" | "razorpay" | "polar" | "mock" = isFreePlan
+    ? "internal"
+    : providerDetails?.provider || (paymentMethod === "polar" ? "polar" : "razorpay");
 
-  // Idempotency check: Return existing subscription & transaction if this payment was already processed
-  const existingTxn = await PaymentTransaction.findOne({ transactionId });
-  if (existingTxn) {
-    let existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
-    if (existingSub) {
-      if (existingSub.status !== "active") {
+  const transactionId =
+    providerDetails?.paymentId ||
+    providerDetails?.checkoutId ||
+    providerDetails?.orderId ||
+    `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+  const isRecurring = Boolean(
+    providerDetails?.subscriptionId &&
+    typeof providerDetails.subscriptionId === "string" &&
+    (providerDetails.subscriptionId.startsWith("sub_") || providerDetails.provider === "polar")
+  );
+
+  let newSubscription: ISubscription | null = null;
+  let transaction: any = null;
+  const isPolar = providerType === "polar" || paymentMethod === "polar";
+  const basePlanPrice = isPolar
+    ? (targetPlan.usdPrice !== undefined && targetPlan.usdPrice !== null ? targetPlan.usdPrice : (targetPlan.price > 0 ? Math.round(targetPlan.price / 80) : 0))
+    : targetPlan.price;
+  let finalAmount = basePlanPrice;
+  let appliedCoupon: any = null;
+
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+
+    // 1. Idempotency Check within Transaction Scope
+    const existingTxn = await PaymentTransaction.findOne({ transactionId }, null, { session });
+    if (existingTxn) {
+      let existingSub = await Subscription.findById(existingTxn.subscriptionId, null, { session }).populate("planId");
+      if (existingSub && existingSub.status !== "active") {
         existingSub.status = "active";
-        await existingSub.save();
+        await existingSub.save({ session });
       }
+      await session.commitTransaction();
       return {
         subscription: existingSub,
         transaction: existingTxn,
       };
     }
-  }
 
-  // Determine if this is a recurring subscription (starts with sub_) or a one-time prepaid order
-  const isRecurring = Boolean(
-    razorpayDetails?.subscriptionId &&
-    typeof razorpayDetails.subscriptionId === "string" &&
-    razorpayDetails.subscriptionId.startsWith("sub_")
-  );
-
-  const newSubscription = await Subscription.create({
-    userId,
-    planId: targetPlan._id,
-    planCode: targetPlan.code,
-    status: "active",
-    billingType: isRecurring ? "recurring" : "one_time",
-    currentPeriodStart: new Date(),
-    currentPeriodEnd: periodEnd,
-    cancelAtPeriodEnd: false,
-    provider: providerType,
-    providerSubscriptionId: isRecurring ? razorpayDetails?.subscriptionId : undefined,
-    providerOrderId: razorpayDetails?.orderId,
-    providerPaymentId: razorpayDetails?.paymentId,
-    usages: { jobsPostedCount: 0, featuredJobsCount: 0, inmailCreditsUsed: 0 },
-  });
-
-  let transaction: any;
-  try {
-    transaction = await PaymentTransaction.create({
-      userId,
-      subscriptionId: newSubscription._id,
-      planId: targetPlan._id,
-      amount: Number(finalAmount.toFixed(2)),
-      currency: targetPlan.currency,
-      provider: providerType,
-      transactionId,
-      providerOrderId: razorpayDetails?.orderId,
-      providerPaymentId: razorpayDetails?.paymentId,
-      providerSubscriptionId: razorpayDetails?.subscriptionId,
-      status: "succeeded",
-      type: "checkout",
-      paymentMethod,
-      paidAt: new Date(),
-      invoiceUrl: `https://jobsbox.com/invoices/inv_${Date.now()}.pdf`,
-      metadata: {
-        planName: targetPlan.name,
-        planCode: targetPlan.code,
-        userEmail: user.email,
-        couponUsed: appliedCoupon?.code,
-      },
-    });
-
-    // Mark other previous subscriptions as canceled, strictly excluding the newly created subscription
-    await Subscription.updateMany(
-      { userId, status: "active", _id: { $ne: newSubscription._id } },
-      { $set: { status: "canceled", cancelAtPeriodEnd: false } }
-    );
-  } catch (err: any) {
-    if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
-      // Concurrent race condition: another webhook/request has already inserted this transaction
-      const existingTxn = await PaymentTransaction.findOne({ transactionId });
-      if (existingTxn) {
-        // Clean up redundant duplicate subscription created during this race
-        if (newSubscription && newSubscription._id.toString() !== existingTxn.subscriptionId?.toString()) {
-          await Subscription.findByIdAndDelete(newSubscription._id).catch(() => { });
-        }
-        const existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
-        if (existingSub && existingSub.status !== "active") {
-          existingSub.status = "active";
-          await existingSub.save();
-        }
-        return {
-          subscription: existingSub,
-          transaction: existingTxn,
-        };
+    // 2. Consume coupon atomically inside transaction session
+    if (couponCode && couponCode.trim()) {
+      appliedCoupon = await consumeCouponCode(couponCode.trim(), session);
+      if (appliedCoupon.discountType === "percentage") {
+        finalAmount = Math.max(0, finalAmount * (1 - appliedCoupon.discountValue / 100));
+      } else {
+        finalAmount = Math.max(0, finalAmount - appliedCoupon.discountValue);
       }
     }
+
+    // 3. Atomically transition user's existing active subscription(s) to 'canceled'
+    await Subscription.updateMany(
+      { userId, status: "active" },
+      { $set: { status: "canceled", cancelAtPeriodEnd: false } },
+      { session }
+    );
+
+    // 4. Create new active subscription within transaction
+    const subDocs = await Subscription.create(
+      [
+        {
+          userId,
+          planId: targetPlan._id,
+          planCode: targetPlan.code,
+          status: "active",
+          billingType: isRecurring ? "recurring" : "one_time",
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: periodEnd,
+          cancelAtPeriodEnd: false,
+          provider: providerType,
+          providerSubscriptionId: isRecurring ? providerDetails?.subscriptionId : undefined,
+          providerOrderId: providerDetails?.orderId,
+          providerPaymentId: providerDetails?.paymentId || providerDetails?.checkoutId,
+          usages: { jobsPostedCount: 0, featuredJobsCount: 0, inmailCreditsUsed: 0 },
+        },
+      ],
+      { session }
+    );
+    newSubscription = subDocs[0];
+
+    // 5. Create PaymentTransaction document within transaction
+    const txnDocs = await PaymentTransaction.create(
+      [
+        {
+          userId,
+          subscriptionId: newSubscription._id,
+          planId: targetPlan._id,
+          amount: Number(finalAmount.toFixed(2)),
+          currency: isPolar ? "USD" : targetPlan.currency,
+          provider: providerType,
+          transactionId,
+          providerOrderId: providerDetails?.orderId,
+          providerPaymentId: providerDetails?.paymentId || providerDetails?.checkoutId,
+          providerSubscriptionId: providerDetails?.subscriptionId,
+          status: "succeeded",
+          type: "checkout",
+          paymentMethod,
+          paidAt: new Date(),
+          invoiceUrl: `https://jobsbox.com/invoices/inv_${Date.now()}.pdf`,
+          metadata: {
+            planName: targetPlan.name,
+            planCode: targetPlan.code,
+            userEmail: user.email,
+            couponUsed: appliedCoupon?.code,
+          },
+        },
+      ],
+      { session }
+    );
+    transaction = txnDocs[0];
+
+    await session.commitTransaction();
+  } catch (err: any) {
+    await session.abortTransaction().catch(() => {});
     throw err;
+  } finally {
+    await session.endSession().catch(() => {});
   }
 
   const invoiceNumber = `INV-${new Date().getFullYear()}-${transaction._id.toString().substring(18).toUpperCase()}`;
+  const txCurrency = isPolar ? "USD" : (targetPlan.currency || "INR");
+  const formattedTxAmount = isPolar 
+    ? `${finalAmount.toLocaleString("en-US")} USD`
+    : `₹${finalAmount.toLocaleString("en-IN")}`;
 
-  // 1. Real-time In-App Notification & Socket Event
+  // Real-time In-App Notification & Socket Event (Strictly Post-Commit)
   createNotification({
     recipientId: user._id.toString(),
     type: NOTIFICATION_TYPES.SYSTEM_ALERT,
     title: "Subscription Activated! 🎉",
-    body: `Payment of ₹${finalAmount.toLocaleString("en-IN")} for ${targetPlan.name} was successful. Your ${targetPlan.billingPeriod} plan is now live!`,
+    body: `Payment of ${formattedTxAmount} for ${targetPlan.name} was successful. Your ${targetPlan.billingPeriod} plan is now live!`,
     link: user.role === "recruiter" ? "/recruiter/billing" : "/candidate/billing",
     metadata: {
       transactionId: transaction._id,
@@ -547,7 +666,7 @@ export async function processCheckoutSession(
     },
   }).catch((err) => console.error("Realtime notification dispatch notice:", err));
 
-  // 2. Automated Email Receipt via Nodemailer
+  // Automated Email Receipt via Nodemailer (Strictly Post-Commit)
   sendSubscriptionReceiptEmail({
     userName: user.name || "Customer",
     userEmail: user.email,
@@ -555,7 +674,7 @@ export async function processCheckoutSession(
     planCode: targetPlan.code,
     billingPeriod: targetPlan.billingPeriod,
     amount: finalAmount,
-    currency: targetPlan.currency || "INR",
+    currency: txCurrency,
     transactionId,
     invoiceNumber,
     invoiceUrl: transaction.invoiceUrl || `https://jobsbox.com/invoices/${transaction._id}`,
@@ -563,7 +682,7 @@ export async function processCheckoutSession(
     paymentMethod,
   }).catch((err) => console.error("Subscription receipt email dispatch notice:", err));
 
-  const populatedSub = await newSubscription.populate("planId");
+  const populatedSub = await newSubscription!.populate("planId");
 
   return {
     subscription: populatedSub,
@@ -601,10 +720,11 @@ export async function createRazorpayOrderService(userId: string, planCode: strin
   let orderData: any = null;
   let rzpSubscription: any = null;
 
-  if (targetPlan.providerPlanId) {
+  const razorpayPlanId = getRazorpayPlanId(targetPlan);
+  if (razorpayPlanId) {
     try {
       rzpSubscription = await createRazorpaySubscription({
-        planId: targetPlan.providerPlanId,
+        planId: razorpayPlanId,
         notes: { userId, planCode, couponCode: couponCode || "" },
       });
     } catch (e: any) {
@@ -661,6 +781,234 @@ export async function verifyRazorpayPaymentService(
   });
 }
 
+export async function createPolarCheckoutService(
+  userId: string,
+  planCode: string,
+  couponCode?: string,
+  successUrl?: string
+) {
+  if (successUrl && !isValidSuccessUrl(successUrl)) {
+    throw new Error("Invalid successUrl origin. Only trusted redirect domains are allowed.");
+  }
+
+  if (successUrl && !isValidSuccessUrl(successUrl)) {
+    throw new Error("Invalid successUrl origin. Only trusted redirect domains are allowed.");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) throw new Error("User not found");
+
+  const targetPlan = await SubscriptionPlan.findOne({ code: planCode });
+  if (!targetPlan) throw new Error("Selected plan does not exist");
+  if (!targetPlan.isActive) throw new Error("Selected plan is inactive");
+
+  if (targetPlan.targetRole !== user.role && user.role !== "admin") {
+    throw new Error(`Plan ${targetPlan.name} is intended for ${targetPlan.targetRole}s`);
+  }
+
+  if (targetPlan.price === 0 || targetPlan.code.includes("free") || targetPlan.provider === "internal") {
+    throw new Error("Free or internal plans cannot be checked out via Polar gateway.");
+  }
+
+  const priceId = await resolveOrProvisionPolarPriceId(targetPlan);
+  if (!priceId) {
+    throw new Error(`Paid plan '${targetPlan.code}' does not have a valid Polar provider mapping (providerMappings.polar.priceId missing).`);
+  }
+
+  let finalPrice = targetPlan.price;
+  if (couponCode && couponCode.trim()) {
+    const coupon = await validateCouponCode(couponCode.trim());
+    if (coupon.discountType === "percentage") {
+      finalPrice = Math.max(0, finalPrice * (1 - coupon.discountValue / 100));
+    } else {
+      finalPrice = Math.max(0, finalPrice - coupon.discountValue);
+    }
+  }
+
+  // ─── UPGRADE PATH: user already has an active Polar subscription ─────────
+  // Polar Sandbox does NOT support PATCH-based plan changes (no plan-change field exists in any
+  // union variant). The only supported upgrade path is:
+  //   1. Revoke the current subscription via PATCH { revoke: true }
+  //   2. Send the user to a fresh Polar checkout for the new plan (email is now free)
+
+  // Step 1: Check our DB for an existing Polar subscription
+  let existingPolarSubId: string | undefined;
+  const dbPolarSub = await Subscription.findOne({
+    userId,
+    status: { $in: ["active", "past_due"] },
+    provider: "polar",
+    providerSubscriptionId: { $exists: true, $nin: [null, ""] },
+  }).sort({ createdAt: -1 });
+
+  if (dbPolarSub?.providerSubscriptionId) {
+    existingPolarSubId = dbPolarSub.providerSubscriptionId;
+    console.log(`[Polar Upgrade] Found existing Polar sub in DB: ${existingPolarSubId}`);
+  }
+
+  // Step 2: If not in DB, query Polar API directly by user email
+  if (!existingPolarSubId && user.email) {
+    const polarSubId = await findActivePolarSubscriptionByEmail(user.email);
+    if (polarSubId) {
+      existingPolarSubId = polarSubId;
+      console.log(`[Polar Upgrade] Found existing Polar sub via API query: ${existingPolarSubId}`);
+    }
+  }
+
+  // Step 3: If existing active Polar subscription found → revoke it, then create fresh checkout
+  if (existingPolarSubId) {
+    console.log(`[Polar Upgrade] Revoking subscription ${existingPolarSubId} to allow plan upgrade to: ${planCode}`);
+    try {
+      const { accessToken, serverUrl } = getPolarCredentials();
+      const revokeRes = await fetch(`${serverUrl}/v1/subscriptions/${existingPolarSubId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ revoke: true }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!revokeRes.ok) {
+        const errText = await revokeRes.text();
+        console.warn(`[Polar Upgrade] Revoke failed (HTTP ${revokeRes.status}): ${errText} — proceeding to checkout anyway`);
+      } else {
+        console.log(`[Polar Upgrade] Revoked existing subscription ${existingPolarSubId} successfully`);
+        // Mark old subscription as canceled in DB so our quota/access logic is clean
+        await Subscription.updateMany(
+          { userId, providerSubscriptionId: existingPolarSubId },
+          { $set: { status: "canceled", cancelAtPeriodEnd: false } }
+        );
+      }
+    } catch (revokeErr: any) {
+      console.warn("[Polar Upgrade] Revoke request error:", revokeErr.message);
+    }
+  }
+
+  // ─── CHECKOUT PATH: create new Polar checkout (for both upgrades and new subscriptions) ───
+  const checkoutData = await createPolarCheckout({
+    priceId,
+    userId,
+    userEmail: user.email,
+    userName: user.name,
+    planCode,
+    couponCode,
+    successUrl,
+  });
+
+  return {
+    checkoutId: checkoutData.id,
+    url: checkoutData.url,
+    priceId,
+    amount: Number(finalPrice.toFixed(2)),
+    currency: targetPlan.currency || "INR",
+    planName: targetPlan.name,
+    status: checkoutData.status,
+    upgraded: !!existingPolarSubId,
+  };
+}
+
+
+export async function verifyPolarPaymentService(
+  userId: string,
+  checkoutId: string,
+  planCode?: string,
+  couponCode?: string
+) {
+  if (!checkoutId) {
+    throw new Error("checkoutId is required to verify Polar payment.");
+  }
+
+  let checkout: any;
+  try {
+    checkout = await fetchPolarCheckout(checkoutId);
+  } catch (err: any) {
+    throw new Error(`Polar payment verification failed: ${err.message}`);
+  }
+
+  const statusLower = (checkout.status || "").toLowerCase();
+  const validStatuses = ["succeeded", "confirmed", "complete"];
+  if (!validStatuses.includes(statusLower)) {
+    throw new Error(`Polar checkout is not in a confirmed payment state. Current status: '${checkout.status}'.`);
+  }
+
+  const effectivePlanCode = planCode || checkout.metadata?.userId === userId ? (planCode || checkout.metadata?.planCode) : checkout.metadata?.planCode;
+  const targetPlanCode = effectivePlanCode || planCode;
+
+  if (!targetPlanCode) {
+    throw new Error("planCode could not be resolved for Polar checkout verification.");
+  }
+
+  const effectiveCouponCode = couponCode || checkout.metadata?.couponCode;
+
+  return await processCheckoutSession(userId, targetPlanCode, "polar", effectiveCouponCode, {
+    checkoutId: checkout.id,
+    paymentId: checkout.id,
+    subscriptionId: checkout.subscriptionId,
+    provider: "polar",
+  });
+}
+
+export async function handlePolarWebhookEvent(rawBody: string | Buffer, signature: string, eventData: any) {
+  const isValid = verifyPolarWebhookSignature(rawBody, signature);
+  if (!isValid) {
+    throw new Error("Invalid Polar webhook signature");
+  }
+
+  const eventId = eventData?.id || eventData?.event_id || `evt_polar_${Date.now()}`;
+  const eventType = eventData?.type || eventData?.event || "unknown";
+
+  let webhookDoc: any;
+  try {
+    webhookDoc = await WebhookEvent.create({
+      provider: "polar",
+      eventId,
+      eventType,
+      payload: eventData,
+      status: "processed",
+      processedAt: new Date(),
+    });
+  } catch (err: any) {
+    if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
+      return { received: true, status: "already_processed" };
+    }
+    throw err;
+  }
+
+  const data = eventData?.data || eventData;
+
+  try {
+    if (eventType === "checkout.created" || eventType === "checkout.updated") {
+      const checkoutState = (data?.status || "").toLowerCase();
+      if (checkoutState === "succeeded" || checkoutState === "confirmed") {
+        const metadata = data?.metadata || {};
+        const userId = metadata.userId;
+        const planCode = metadata.planCode;
+        const checkoutId = data?.id;
+        const subscriptionId = data?.subscription_id;
+
+        if (userId && planCode && checkoutId) {
+          await processCheckoutSession(userId, planCode, "polar", metadata.couponCode, {
+            checkoutId,
+            paymentId: checkoutId,
+            subscriptionId,
+            provider: "polar",
+          });
+        }
+      }
+    } else if (eventType === "subscription.revoked" || eventType === "subscription.cancelled") {
+      const subId = data?.id || data?.subscription_id;
+      if (subId) {
+        await Subscription.findOneAndUpdate(
+          { providerSubscriptionId: subId },
+          { status: "canceled", cancelAtPeriodEnd: false }
+        );
+      }
+    }
+
+    return { received: true, status: "processed" };
+  } catch (err: any) {
+    await WebhookEvent.deleteOne({ _id: webhookDoc._id }).catch(() => {});
+    throw err;
+  }
+}
+
 export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signature: string, eventData: any) {
   const isValid = verifyWebhookSignature(rawBody, signature);
   if (!isValid) {
@@ -670,10 +1018,22 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
   const eventId = eventData?.event_id || eventData?.id || `evt_${Date.now()}`;
   const eventType = eventData?.event || "unknown";
 
-  // Check Webhook Event Idempotency
-  const existingEvent = await WebhookEvent.findOne({ provider: "razorpay", eventId });
-  if (existingEvent) {
-    return { received: true, status: "already_processed" };
+  // 1. Atomic Claim of Webhook Event via DB Unique Index
+  let webhookDoc: any;
+  try {
+    webhookDoc = await WebhookEvent.create({
+      provider: "razorpay",
+      eventId,
+      eventType,
+      payload: eventData,
+      status: "processed",
+      processedAt: new Date(),
+    });
+  } catch (err: any) {
+    if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
+      return { received: true, status: "already_processed" };
+    }
+    throw err;
   }
 
   const payload = eventData?.payload || {};
@@ -731,33 +1091,10 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
       }
     }
 
-    try {
-      await WebhookEvent.create({
-        provider: "razorpay",
-        eventId,
-        eventType,
-        payload: eventData,
-        status: "processed",
-        processedAt: new Date(),
-      });
-    } catch (e: any) {
-      if (e.code === 11000 || e.message?.includes("E11000")) {
-        return { received: true, status: "already_processed" };
-      }
-    }
-
     return { received: true, status: "processed" };
   } catch (err: any) {
-    try {
-      await WebhookEvent.create({
-        provider: "razorpay",
-        eventId,
-        eventType,
-        payload: eventData,
-        status: "failed",
-        processedAt: new Date(),
-      });
-    } catch (e) { }
+    // If business processing fails after atomic claim, remove claimed event document so future retries can process
+    await WebhookEvent.deleteOne({ _id: webhookDoc._id }).catch(() => {});
     throw err;
   }
 }
@@ -804,6 +1141,33 @@ export async function cancelUserSubscription(userId: string) {
       }
     }
   }
+
+  // Polar subscription cancellation: use PATCH { revoke: true } (Polar has no DELETE endpoint)
+  // This is the SubscriptionRevoke discriminant confirmed via live API probe.
+  const isPolar = activeSub.provider === "polar";
+  if (isPolar && activeSub.providerSubscriptionId) {
+    try {
+      const { accessToken, serverUrl } = getPolarCredentials();
+      const response = await fetch(`${serverUrl}/v1/subscriptions/${activeSub.providerSubscriptionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ revoke: true }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`[Billing] Polar API cancel failed: HTTP ${response.status} - ${errorText}`);
+      } else {
+        activeSub.status = "canceled";
+        activeSub.cancelAtPeriodEnd = false;
+        await activeSub.save();
+        return activeSub;
+      }
+    } catch (err: any) {
+      console.warn("[Billing] Polar API cancel notice:", err.message);
+    }
+  }
+
 
   activeSub.cancelAtPeriodEnd = true;
   await activeSub.save();
@@ -878,4 +1242,21 @@ export async function verifyUserQuota(userId: string, quotaType: "post_job" | "f
   }
 
   return { allowed: true };
+}
+
+function isValidSuccessUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    const allowed = [
+      "https://deepanshu-job-portal-frontend-five.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      ...(process.env.ALLOWED_ORIGINS
+        ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+        : []),
+    ];
+    return allowed.includes(parsed.origin);
+  } catch {
+    return false;
+  }
 }

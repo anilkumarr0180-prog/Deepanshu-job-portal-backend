@@ -208,8 +208,8 @@ export function verifyWebhookSignature(rawBody: string | Buffer, signature: stri
     return true;
   }
 
-  if (webhookSecret === "your_webhook_secret" || process.env.NODE_ENV === "development") {
-    console.warn("Notice: Razorpay Webhook signature mismatch in dev mode (placeholder secret). Allowing event processing.");
+  if (process.env.NODE_ENV === "development") {
+    console.warn("Notice: Razorpay Webhook signature mismatch in dev mode. Allowing event processing.");
     return true;
   }
 

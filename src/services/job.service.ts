@@ -9,6 +9,7 @@ import {
 import { USER_ROLES } from "../constants/roles";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
+import { getAuthorizedCompanyForRecruiter } from "./company.service";
 
 interface CreateJobInput {
   title: string;
@@ -52,6 +53,53 @@ interface JobFilters {
 
 /*
 |--------------------------------------------------------------------------
+| Helper: Resolve Skill names to Skill Document IDs
+|--------------------------------------------------------------------------
+*/
+export const resolveSkills = async (
+  skillNames: string[]
+): Promise<{ skillIds: Types.ObjectId[]; skills: string[] }> => {
+  const Skill = (await import("../models/skill.model")).default;
+  const uniqueNames = Array.from(
+    new Set(skillNames.map((s) => s.trim()).filter(Boolean))
+  );
+
+  const skillIds: Types.ObjectId[] = [];
+  const skills: string[] = [];
+
+  for (const name of uniqueNames) {
+    const slug =
+      name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "skill";
+
+    let skill = await Skill.findOne({ slug });
+    if (!skill) {
+      try {
+        skill = await Skill.create({
+          name,
+          slug,
+          isVerified: true,
+        });
+      } catch (err: any) {
+        skill = await Skill.findOne({ slug });
+        if (!skill) {
+          skill = await Skill.findOne({ name });
+        }
+      }
+    }
+    if (skill) {
+      skillIds.push(skill._id as Types.ObjectId);
+      skills.push(skill.name);
+    }
+  }
+
+  return { skillIds, skills };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Job
 |--------------------------------------------------------------------------
 */
@@ -60,24 +108,35 @@ export const createJob = async (
   jobData: CreateJobInput,
   recruiterId: Types.ObjectId
 ) => {
-  const Company = (await import("../models/company.model")).default;
-  let company = await Company.findOne({ recruiterId });
+  const recruiterIdStr = recruiterId.toString();
 
-  if (!company) {
+  // Enforce company membership via CompanyRecruiter
+  let auth = await getAuthorizedCompanyForRecruiter(recruiterIdStr);
+
+  if (!auth) {
+    // Auto-create company if none exists
+    const { createCompany } = await import("./company.service");
     const companyName = jobData.company?.trim() || "My Company";
-    company = await Company.create({
+    await createCompany(recruiterIdStr, {
       name: companyName,
       description: `${companyName} hiring organization.`,
-      recruiterId,
-      isVerified: true,
     });
-  } else if (!company.isVerified) {
+    auth = await getAuthorizedCompanyForRecruiter(recruiterIdStr);
+  }
+
+  if (!auth) {
+    throw new AppError(
+      "Recruiter is not authorized for any active company profile.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  const { company, recruiterProfile } = auth;
+
+  if (!company.isVerified) {
     company.isVerified = true;
     await company.save();
   }
-
-  const RecruiterProfile = (await import("../models/recruiter-profile.model")).default;
-  const recruiterProfile = await RecruiterProfile.findOne({ userId: recruiterId });
 
   let salaryMin = Number(jobData.salaryMin) || 0;
   let salaryMax = Number(jobData.salaryMax) || 0;
@@ -90,6 +149,9 @@ export const createJob = async (
     salaryMax = salaryMin;
   }
 
+  // Resolve skill string array to canonical Skill document IDs
+  const { skillIds, skills } = await resolveSkills(jobData.skills || []);
+
   const job = await Job.create({
     title: jobData.title,
     description: jobData.description,
@@ -101,7 +163,8 @@ export const createJob = async (
     employmentType: jobData.employmentType,
     experienceLevel: jobData.experienceLevel,
     status: jobData.status,
-    skills: jobData.skills,
+    skills,
+    skillIds,
     recruiterId,
     postedBy: recruiterProfile?._id,
   });
@@ -426,15 +489,16 @@ export const updateJob = async (
   recruiterId: string,
   updateData: UpdateJobInput
 ) => {
-  const Company = (await import("../models/company.model")).default;
-  const company = await Company.findOne({ recruiterId });
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
 
-  if (!company) {
+  if (!auth) {
     throw new AppError(
       "Create your company profile before updating jobs.",
       HTTP_STATUS.FORBIDDEN
     );
   }
+
+  const { company } = auth;
 
   if (!company.isVerified) {
     if (process.env.NODE_ENV !== "production") {
@@ -457,7 +521,10 @@ export const updateJob = async (
     );
   }
 
-  if (job.recruiterId.toString() !== recruiterId) {
+  const isOwnerRecruiter = job.recruiterId.toString() === recruiterId;
+  const isCompanyRecruiter = job.companyId && company._id.toString() === job.companyId.toString();
+
+  if (!isOwnerRecruiter && !isCompanyRecruiter) {
     throw new AppError(
       "You are not allowed to update this job.",
       HTTP_STATUS.FORBIDDEN
@@ -484,7 +551,12 @@ export const updateJob = async (
   if (updateData.employmentType !== undefined) job.employmentType = updateData.employmentType;
   if (updateData.experienceLevel !== undefined) job.experienceLevel = updateData.experienceLevel;
   if (updateData.status !== undefined) job.status = updateData.status;
-  if (updateData.skills !== undefined) job.skills = updateData.skills;
+
+  if (updateData.skills !== undefined) {
+    const { skillIds, skills } = await resolveSkills(updateData.skills);
+    job.skillIds = skillIds;
+    job.skills = skills;
+  }
 
   await job.save();
 
@@ -520,7 +592,11 @@ export const deleteJob = async (
     );
   }
 
-  if (job.recruiterId.toString() !== recruiterId) {
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
+  const isOwnerRecruiter = job.recruiterId.toString() === recruiterId;
+  const isCompanyRecruiter = auth && job.companyId && auth.company._id.toString() === job.companyId.toString();
+
+  if (!isOwnerRecruiter && !isCompanyRecruiter) {
     throw new AppError(
       "You are not allowed to delete this job.",
       HTTP_STATUS.FORBIDDEN

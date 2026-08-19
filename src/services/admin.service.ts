@@ -389,7 +389,10 @@ export const verifyCompany = async (companyId: string, isVerified: boolean) => {
   // Efficient cascade update using updateMany() if company is unverified
   if (!isVerified) {
     await Job.updateMany(
-      { recruiterId: company.recruiterId, status: JOB_STATUS.ACTIVE },
+      {
+        $or: [{ companyId: company._id }, { recruiterId: company.recruiterId }],
+        status: JOB_STATUS.ACTIVE,
+      },
       { $set: { status: JOB_STATUS.CLOSED } }
     );
   }
@@ -420,10 +423,10 @@ export const getFinanceOverview = async () => {
     thirtyDayTimeSeries,
     recentTransactions,
   ] = await Promise.all([
-    // Total gross volume
+    // Total gross volume grouped by currency
     PaymentTransaction.aggregate([
       { $match: { status: "succeeded" } },
-      { $group: { _id: null, totalGross: { $sum: "$amount" }, avgOrderValue: { $avg: "$amount" } } },
+      { $group: { _id: "$currency", totalGross: { $sum: "$amount" }, avgOrderValue: { $avg: "$amount" } } },
     ]),
     // Active paid subscriptions count
     Subscription.countDocuments({
@@ -464,8 +467,22 @@ export const getFinanceOverview = async () => {
       .lean(),
   ]);
 
-  const totalGross = revenueAgg[0]?.totalGross || 0;
-  const avgOrderValue = Number((revenueAgg[0]?.avgOrderValue || 0).toFixed(2));
+  let grossUsd = 0;
+  let grossInr = 0;
+  let totalOrderSum = 0;
+  let orderCount = 0;
+
+  for (const doc of revenueAgg) {
+    totalOrderSum += doc.totalGross || 0;
+    orderCount += doc.count || 1;
+    if ((doc._id || "").toUpperCase() === "USD") {
+      grossUsd += doc.totalGross || 0;
+    } else {
+      grossInr += doc.totalGross || 0;
+    }
+  }
+
+  const avgOrderValue = orderCount > 0 ? Number((totalOrderSum / orderCount).toFixed(2)) : 0;
   const successRate =
     totalTransactionsCount > 0
       ? Number(((succeededTxnCount / totalTransactionsCount) * 100).toFixed(1))
@@ -477,22 +494,29 @@ export const getFinanceOverview = async () => {
     planCode: { $not: /free/i },
   }).populate("planId");
 
-  let calculatedMRR = 0;
+  let mrrUsd = 0;
+  let mrrInr = 0;
   for (const sub of activePaidSubs) {
     const plan = sub.planId as any;
-    if (plan && typeof plan.price === "number") {
-      if (plan.billingPeriod === "yearly") {
-        calculatedMRR += plan.price / 12;
-      } else {
-        calculatedMRR += plan.price;
-      }
+    if (plan) {
+      const isUsd = sub.provider === "polar" || plan.currency === "USD";
+      const priceToUse = isUsd
+        ? (plan.usdPrice !== undefined && plan.usdPrice !== null ? plan.usdPrice : (typeof plan.price === "number" ? Math.round(plan.price / 80) : 0))
+        : (plan.price || 0);
+      const monthlyRate = plan.billingPeriod === "yearly" ? priceToUse / 12 : priceToUse;
+      if (isUsd) mrrUsd += monthlyRate;
+      else mrrInr += monthlyRate;
     }
   }
 
   return {
     kpi: {
-      totalGross: Number(totalGross.toFixed(2)),
-      mrr: Number(calculatedMRR.toFixed(2)),
+      totalGross: Number((grossUsd + grossInr).toFixed(2)),
+      grossUsd: Number(grossUsd.toFixed(2)),
+      grossInr: Number(grossInr.toFixed(2)),
+      mrr: Number((mrrUsd + mrrInr).toFixed(2)),
+      mrrUsd: Number(mrrUsd.toFixed(2)),
+      mrrInr: Number(mrrInr.toFixed(2)),
       activePaidSubscriptions: activePaidSubsCount,
       avgOrderValue,
       totalTransactions: totalTransactionsCount,
@@ -600,6 +624,7 @@ export const createAdminPlan = async (data: {
   features: Record<string, any>;
   provider?: "internal" | "stripe" | "razorpay";
   providerPlanId?: string;
+  providerMappings?: Record<string, any>;
   isActive?: boolean;
   isPopular?: boolean;
 }) => {
@@ -608,12 +633,21 @@ export const createAdminPlan = async (data: {
     throw new AppError(`Plan with code "${data.code}" already exists.`, HTTP_STATUS.CONFLICT);
   }
 
+  const razorpayId = data.providerMappings?.razorpay?.planId || data.providerPlanId;
+  if (data.providerPlanId && data.providerMappings?.razorpay?.planId && data.providerPlanId !== data.providerMappings.razorpay.planId) {
+    throw new AppError(`Conflicting Razorpay Plan IDs provided for plan "${data.code}"`, HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const canonicalMappings = data.providerMappings || (razorpayId ? { razorpay: { planId: razorpayId } } : {});
+
   const newPlan = await SubscriptionPlan.create({
     ...data,
     code: data.code.trim().toLowerCase(),
     currency: data.currency || "INR",
     billingPeriod: data.billingPeriod || "monthly",
     provider: data.provider || "razorpay",
+    providerMappings: canonicalMappings,
+    providerPlanId: razorpayId,
     isActive: data.isActive !== undefined ? data.isActive : true,
   });
 
@@ -633,6 +667,7 @@ export const updateAdminPlan = async (
     billingPeriod: "monthly" | "yearly";
     features: Record<string, any>;
     providerPlanId: string;
+    providerMappings: Record<string, any>;
     isActive: boolean;
     isPopular: boolean;
   }>
@@ -642,13 +677,28 @@ export const updateAdminPlan = async (
     throw new AppError("Subscription plan not found.", HTTP_STATUS.NOT_FOUND);
   }
 
+  if (data.providerPlanId && data.providerMappings?.razorpay?.planId && data.providerPlanId !== data.providerMappings.razorpay.planId) {
+    throw new AppError(`Conflicting Razorpay Plan IDs provided in update for plan "${plan.code}"`, HTTP_STATUS.BAD_REQUEST);
+  }
+
   if (data.name !== undefined) plan.name = data.name;
   if (data.description !== undefined) plan.description = data.description;
   if (data.price !== undefined) plan.price = Math.max(0, data.price);
   if (data.currency !== undefined) plan.currency = data.currency;
   if (data.billingPeriod !== undefined) plan.billingPeriod = data.billingPeriod;
   if (data.features !== undefined) plan.features = { ...plan.features, ...data.features };
-  if (data.providerPlanId !== undefined) plan.providerPlanId = data.providerPlanId;
+  if (data.providerMappings !== undefined) {
+    plan.set("providerMappings", { ...plan.providerMappings, ...data.providerMappings });
+    if (data.providerMappings.razorpay?.planId) {
+      plan.providerPlanId = data.providerMappings.razorpay.planId;
+    }
+  }
+  if (data.providerPlanId !== undefined) {
+    plan.providerPlanId = data.providerPlanId;
+    if (!plan.providerMappings?.razorpay?.planId) {
+      plan.set("providerMappings.razorpay", { planId: data.providerPlanId });
+    }
+  }
   if (data.isActive !== undefined) plan.isActive = data.isActive;
   if (data.isPopular !== undefined) plan.isPopular = data.isPopular;
 

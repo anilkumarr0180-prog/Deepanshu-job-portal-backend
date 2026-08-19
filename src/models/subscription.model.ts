@@ -9,7 +9,7 @@ export interface ISubscription extends Document {
   currentPeriodStart: Date;
   currentPeriodEnd: Date;
   cancelAtPeriodEnd: boolean;
-  provider: "internal" | "stripe" | "razorpay" | "mock";
+  provider: "internal" | "stripe" | "razorpay" | "polar" | "mock";
   providerSubscriptionId?: string;
   providerOrderId?: string;
   providerPaymentId?: string;
@@ -29,7 +29,6 @@ const subscriptionSchema = new Schema<ISubscription>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     planId: {
       type: Schema.Types.ObjectId,
@@ -67,7 +66,7 @@ const subscriptionSchema = new Schema<ISubscription>(
     },
     provider: {
       type: String,
-      enum: ["internal", "stripe", "razorpay", "mock"],
+      enum: ["internal", "stripe", "razorpay", "polar", "mock"],
       default: "internal",
     },
     providerSubscriptionId: {
@@ -100,6 +99,16 @@ const subscriptionSchema = new Schema<ISubscription>(
 );
 
 subscriptionSchema.index({ userId: 1, status: 1 });
+
+// Enforce at most ONE active subscription per user at the database level to prevent race conditions
+subscriptionSchema.index(
+  { userId: 1 },
+  {
+    name: "unique_active_user_subscription",
+    unique: true,
+    partialFilterExpression: { status: "active" },
+  }
+);
 
 const Subscription = model<ISubscription>("Subscription", subscriptionSchema);
 
