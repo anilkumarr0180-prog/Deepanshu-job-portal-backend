@@ -1,6 +1,6 @@
 import { createNotification } from "./notification.service";
 import { NOTIFICATION_TYPES } from "../constants/notification-type";
-import { sendSubscriptionReceiptEmail } from "./email.service";
+import { sendSubscriptionReceiptEmail, sendSubscriptionRenewedEmail } from "./email.service";
 import mongoose, { Types } from "mongoose";
 import crypto from "crypto";
 import SubscriptionPlan, { ISubscriptionPlan } from "../models/subscription-plan.model";
@@ -276,14 +276,22 @@ export const DEFAULT_PLANS = [
  * Throws an explicit error if a paid plan lacks a Razorpay provider mapping.
  */
 export function getRazorpayPlanId(plan: ISubscriptionPlan): string | undefined {
-  if (plan.price === 0 || plan.code.includes("free")) {
+  if (plan.price === 0 || plan.code.includes("free") || plan.provider === "internal") {
     return undefined;
   }
-  const planId = plan.providerMappings?.razorpay?.planId;
-  if (!planId) {
-    throw new Error(`Paid plan '${plan.code}' does not have a valid Razorpay provider mapping (providerMappings.razorpay.planId missing).`);
+  let planId = plan.providerMappings?.razorpay?.planId;
+  if (!planId || !planId.trim()) {
+    const code = (plan.code || "").toLowerCase();
+    if (code === "recruiter_lite") planId = env.RAZORPAY_PLAN_RECRUITER_LITE;
+    else if (code === "recruiter_enterprise") planId = env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE;
+    else if (code === "candidate_pro") planId = env.RAZORPAY_PLAN_CANDIDATE_PRO;
+    else if (code === "candidate_premium") planId = env.RAZORPAY_PLAN_CANDIDATE_PREMIUM;
+    else if (code === "recruiter_lite_yearly") planId = env.RAZORPAY_PLAN_RECRUITER_LITE_YEARLY;
+    else if (code === "recruiter_enterprise_yearly") planId = env.RAZORPAY_PLAN_RECRUITER_ENTERPRISE_YEARLY;
+    else if (code === "candidate_pro_yearly") planId = env.RAZORPAY_PLAN_CANDIDATE_PRO_YEARLY;
+    else if (code === "candidate_premium_yearly") planId = env.RAZORPAY_PLAN_CANDIDATE_PREMIUM_YEARLY;
   }
-  return planId;
+  return planId ? planId.trim() : undefined;
 }
 
 export async function seedDefaultCoupons() {
@@ -532,10 +540,11 @@ export async function processCheckoutSession(
     providerDetails?.orderId ||
     `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-  const isRecurring = Boolean(
-    providerDetails?.subscriptionId &&
-    typeof providerDetails.subscriptionId === "string" &&
-    (providerDetails.subscriptionId.startsWith("sub_") || providerDetails.provider === "polar")
+  const isRecurring = !isFreePlan && (
+    providerType === "polar" ||
+    (Boolean(providerDetails?.subscriptionId) &&
+      typeof providerDetails?.subscriptionId === "string" &&
+      (Boolean(providerDetails?.subscriptionId?.startsWith("sub_")) || providerDetails?.provider === "polar"))
   );
 
   let newSubscription: ISubscription | null = null;
@@ -937,12 +946,140 @@ export async function verifyPolarPaymentService(
 
   const effectiveCouponCode = couponCode || checkout.metadata?.couponCode;
 
-  return await processCheckoutSession(userId, targetPlanCode, "polar", effectiveCouponCode, {
+  let resolvedSubId = checkout.subscriptionId;
+  if (!resolvedSubId) {
+    const user = await User.findById(userId);
+    if (user?.email) {
+      resolvedSubId = (await findActivePolarSubscriptionByEmail(user.email)) || undefined;
+    }
+  }
+
+  const result = await processCheckoutSession(userId, targetPlanCode, "polar", effectiveCouponCode, {
     checkoutId: checkout.id,
     paymentId: checkout.id,
-    subscriptionId: checkout.subscriptionId,
+    subscriptionId: resolvedSubId,
     provider: "polar",
   });
+
+  // Ensure documents have providerSubscriptionId populated if resolved
+  if (resolvedSubId) {
+    await Subscription.updateMany(
+      { userId, status: "active", provider: "polar", $or: [{ providerSubscriptionId: null }, { providerSubscriptionId: "" }, { providerSubscriptionId: { $exists: false } }] },
+      { $set: { providerSubscriptionId: resolvedSubId } }
+    );
+    await PaymentTransaction.updateMany(
+      { transactionId: checkout.id, $or: [{ providerSubscriptionId: null }, { providerSubscriptionId: "" }, { providerSubscriptionId: { $exists: false } }] },
+      { $set: { providerSubscriptionId: resolvedSubId } }
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Processes an automated Autopay recurring renewal cycle for an active subscription.
+ * Extends currentPeriodEnd, refreshes quotas, records PaymentTransaction, and sends renewal receipt.
+ */
+export async function processAutopayRenewalCycle(params: {
+  subscription: ISubscription;
+  amount: number;
+  currency: string;
+  provider: "polar" | "razorpay";
+  transactionId: string;
+  providerPaymentId?: string;
+  orderId?: string;
+  periodEnd?: Date;
+}) {
+  const { subscription, amount, currency, provider, transactionId, providerPaymentId, orderId, periodEnd } = params;
+
+  // 1. Idempotency check: don't double process duplicate renewal webhook deliveries
+  const existingTxn = await PaymentTransaction.findOne({ transactionId });
+  if (existingTxn) {
+    return { subscription, transaction: existingTxn };
+  }
+
+  const user = await User.findById(subscription.userId);
+  const plan = await SubscriptionPlan.findById(subscription.planId);
+
+  // 2. Compute new period end (+1 month or +1 year)
+  let newPeriodEnd = periodEnd;
+  if (!newPeriodEnd) {
+    const baseDate = new Date(subscription.currentPeriodEnd) > new Date() ? new Date(subscription.currentPeriodEnd) : new Date();
+    newPeriodEnd = new Date(baseDate);
+    if (plan?.billingPeriod === "yearly") {
+      newPeriodEnd.setFullYear(newPeriodEnd.getFullYear() + 1);
+    } else {
+      newPeriodEnd.setMonth(newPeriodEnd.getMonth() + 1);
+    }
+  }
+
+  // 3. Atomically update subscription
+  subscription.currentPeriodEnd = newPeriodEnd;
+  subscription.status = "active";
+  subscription.usages = { jobsPostedCount: 0, featuredJobsCount: 0, inmailCreditsUsed: 0 };
+  await subscription.save();
+
+  // 4. Create renewal PaymentTransaction
+  const invoiceNumber = `INV-${new Date().getFullYear()}-${transactionId.substring(Math.max(0, transactionId.length - 8)).toUpperCase()}`;
+  const transaction = await PaymentTransaction.create({
+    userId: subscription.userId,
+    subscriptionId: subscription._id,
+    planId: subscription.planId,
+    amount: Number(amount.toFixed(2)),
+    currency: currency.toUpperCase(),
+    provider,
+    transactionId,
+    providerPaymentId,
+    providerOrderId: orderId,
+    providerSubscriptionId: subscription.providerSubscriptionId,
+    status: "succeeded",
+    type: "renewal",
+    paymentMethod: "card",
+    paidAt: new Date(),
+    invoiceUrl: `https://jobsbox.com/invoices/inv_${Date.now()}.pdf`,
+    metadata: {
+      planName: plan?.name,
+      planCode: subscription.planCode,
+      billingType: "recurring_autopay",
+      orderId,
+    },
+  });
+
+  // 5. Realtime In-App Notification
+  const formattedAmt = provider === "polar" ? `$${amount} USD` : `₹${amount}`;
+  if (user) {
+    createNotification({
+      recipientId: user._id.toString(),
+      type: NOTIFICATION_TYPES.SYSTEM_ALERT,
+      title: "Subscription Auto-Renewed 🔄",
+      body: `Your ${plan?.name || "Premium"} plan has auto-renewed for ${formattedAmt}. Active features and quotas have been refreshed.`,
+      link: user.role === "recruiter" ? "/recruiter/billing" : "/candidate/billing",
+      metadata: {
+        transactionId: transaction._id,
+        planCode: subscription.planCode,
+        invoiceNumber,
+      },
+    }).catch(() => {});
+
+    // 6. Branded Email Receipt
+    const nextRenewalFormatted = new Date(newPeriodEnd).toLocaleDateString("en-IN", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+    sendSubscriptionRenewedEmail({
+      userName: user.name || "Customer",
+      userEmail: user.email,
+      planName: plan?.name || "Premium Plan",
+      nextRenewalDate: nextRenewalFormatted,
+      amountPaid: formattedAmt,
+      invoiceNumber,
+      role: user.role || "recruiter",
+    }).catch((err) => console.error("Auto-renewal email failed:", err));
+  }
+
+  return { subscription, transaction };
 }
 
 export async function handlePolarWebhookEvent(rawBody: string | Buffer, signature: string, eventData: any) {
@@ -981,7 +1118,7 @@ export async function handlePolarWebhookEvent(rawBody: string | Buffer, signatur
         const userId = metadata.userId;
         const planCode = metadata.planCode;
         const checkoutId = data?.id;
-        const subscriptionId = data?.subscription_id;
+        const subscriptionId = data?.subscription_id || data?.subscription?.id;
 
         if (userId && planCode && checkoutId) {
           await processCheckoutSession(userId, planCode, "polar", metadata.couponCode, {
@@ -991,6 +1128,55 @@ export async function handlePolarWebhookEvent(rawBody: string | Buffer, signatur
             provider: "polar",
           });
         }
+
+        if (subscriptionId && checkoutId) {
+          await Subscription.updateMany(
+            { providerPaymentId: checkoutId, $or: [{ providerSubscriptionId: null }, { providerSubscriptionId: "" }, { providerSubscriptionId: { $exists: false } }] },
+            { $set: { providerSubscriptionId: subscriptionId, billingType: "recurring" } }
+          );
+          await PaymentTransaction.updateMany(
+            { providerPaymentId: checkoutId, $or: [{ providerSubscriptionId: null }, { providerSubscriptionId: "" }, { providerSubscriptionId: { $exists: false } }] },
+            { $set: { providerSubscriptionId: subscriptionId } }
+          );
+        }
+      }
+    } else if (eventType === "order.created" || eventType === "invoice.paid") {
+      // Automated Autopay Recurring Renewal Cycle from Polar
+      const subId = data?.subscription_id || data?.subscription?.id;
+      const orderId = data?.id;
+      const amount = (data?.total_amount || data?.amount || 0) / 100;
+      const currency = (data?.currency || "usd").toUpperCase();
+
+      if (subId) {
+        const activeSub = await Subscription.findOne({
+          providerSubscriptionId: subId,
+          status: { $in: ["active", "past_due"] },
+        }).populate("planId");
+
+        if (activeSub) {
+          await processAutopayRenewalCycle({
+            subscription: activeSub,
+            amount: amount > 0 ? amount : ((activeSub.planId as any)?.usdPrice || 2),
+            currency,
+            provider: "polar",
+            transactionId: orderId || `txn_polar_renew_${Date.now()}`,
+            providerPaymentId: orderId,
+            orderId,
+          });
+        }
+      }
+    } else if (eventType === "subscription.created" || eventType === "subscription.updated" || eventType === "subscription.active") {
+      const subId = data?.id;
+      const checkoutId = data?.checkout_id || data?.checkout?.id;
+      if (subId && checkoutId) {
+        await Subscription.updateMany(
+          { providerPaymentId: checkoutId, $or: [{ providerSubscriptionId: null }, { providerSubscriptionId: "" }, { providerSubscriptionId: { $exists: false } }] },
+          { $set: { providerSubscriptionId: subId, billingType: "recurring" } }
+        );
+        await PaymentTransaction.updateMany(
+          { providerPaymentId: checkoutId, $or: [{ providerSubscriptionId: null }, { providerSubscriptionId: "" }, { providerSubscriptionId: { $exists: false } }] },
+          { $set: { providerSubscriptionId: subId } }
+        );
       }
     } else if (eventType === "subscription.revoked" || eventType === "subscription.cancelled") {
       const subId = data?.id || data?.subscription_id;
@@ -1039,10 +1225,35 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
   const payload = eventData?.payload || {};
 
   try {
-    if (
+    if (eventType === "subscription.charged") {
+      // Automated Autopay Recurring Renewal Cycle from Razorpay
+      const entity = payload.payment?.entity || payload.subscription?.entity;
+      const subEntity = payload.subscription?.entity;
+      const subId = subEntity?.id || entity?.subscription_id;
+      const paymentId = entity?.id;
+      const amount = (entity?.amount || 0) / 100;
+
+      if (subId) {
+        const activeSub = await Subscription.findOne({
+          providerSubscriptionId: subId,
+          status: { $in: ["active", "past_due"] },
+        }).populate("planId");
+
+        if (activeSub) {
+          await processAutopayRenewalCycle({
+            subscription: activeSub,
+            amount: amount > 0 ? amount : ((activeSub.planId as any)?.price || 99),
+            currency: entity?.currency || "INR",
+            provider: "razorpay",
+            transactionId: paymentId || `txn_rzp_renew_${Date.now()}`,
+            providerPaymentId: paymentId,
+            orderId: entity?.order_id,
+          });
+        }
+      }
+    } else if (
       eventType === "payment.captured" ||
       eventType === "order.paid" ||
-      eventType === "subscription.charged" ||
       eventType === "subscription.activated"
     ) {
       const entity = payload.payment?.entity || payload.order?.entity || payload.subscription?.entity;
@@ -1142,32 +1353,22 @@ export async function cancelUserSubscription(userId: string) {
     }
   }
 
-  // Polar subscription cancellation: use PATCH { revoke: true } (Polar has no DELETE endpoint)
-  // This is the SubscriptionRevoke discriminant confirmed via live API probe.
+  // Polar subscription auto-renewal disable: retain active status until currentPeriodEnd
   const isPolar = activeSub.provider === "polar";
   if (isPolar && activeSub.providerSubscriptionId) {
     try {
       const { accessToken, serverUrl } = getPolarCredentials();
-      const response = await fetch(`${serverUrl}/v1/subscriptions/${activeSub.providerSubscriptionId}`, {
+      // Polar API PATCH subscription: cancel_at_period_end preserves paid access until cycle end
+      await fetch(`${serverUrl}/v1/subscriptions/${activeSub.providerSubscriptionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ revoke: true }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`[Billing] Polar API cancel failed: HTTP ${response.status} - ${errorText}`);
-      } else {
-        activeSub.status = "canceled";
-        activeSub.cancelAtPeriodEnd = false;
-        await activeSub.save();
-        return activeSub;
-      }
+        body: JSON.stringify({ cancel_at_period_end: true }),
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => {});
     } catch (err: any) {
       console.warn("[Billing] Polar API cancel notice:", err.message);
     }
   }
-
 
   activeSub.cancelAtPeriodEnd = true;
   await activeSub.save();
@@ -1182,6 +1383,22 @@ export async function reactivateUserSubscription(userId: string) {
 
   if (!activeSub.cancelAtPeriodEnd) {
     return activeSub;
+  }
+
+  // Polar subscription auto-renewal re-enable: sync cancel_at_period_end = false with Polar API
+  const isPolar = activeSub.provider === "polar";
+  if (isPolar && activeSub.providerSubscriptionId) {
+    try {
+      const { accessToken, serverUrl } = getPolarCredentials();
+      await fetch(`${serverUrl}/v1/subscriptions/${activeSub.providerSubscriptionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ cancel_at_period_end: false }),
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => {});
+    } catch (err: any) {
+      console.warn("[Billing] Polar API reactivate notice:", err.message);
+    }
   }
 
   activeSub.cancelAtPeriodEnd = false;

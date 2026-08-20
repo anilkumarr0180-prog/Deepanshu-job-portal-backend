@@ -211,17 +211,28 @@ export async function fetchPolarCheckout(checkoutId: string) {
 
   const data: any = await response.json();
 
-  let subscriptionId = data.subscription_id;
+  let subscriptionId = data.subscription_id || data.subscription?.id;
+  const customerEmail = data.customer_email || data.customer?.email;
+
   if (!subscriptionId && (data.status === "succeeded" || data.status === "confirmed")) {
     try {
-      const subRes = await fetch(`${serverUrl}/v1/subscriptions/?limit=50`, {
+      const queryParam = customerEmail
+        ? `?customer_email=${encodeURIComponent(customerEmail)}&limit=20`
+        : `?limit=50`;
+      const subRes = await fetch(`${serverUrl}/v1/subscriptions/${queryParam}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(6000),
       });
       if (subRes.ok) {
         const subData: any = await subRes.json();
-        const items = Array.isArray(subData) ? subData : subData.items || [];
-        const matchedSub = items.find((s: any) => s.checkout_id === checkoutId);
+        const items = Array.isArray(subData) ? subData : subData.items || subData.result || [];
+        const matchedSub = items.find((s: any) =>
+          s.checkout_id === checkoutId ||
+          s.checkout?.id === checkoutId ||
+          (customerEmail && (s.customer_email === customerEmail || s.customer?.email === customerEmail)) ||
+          s.status === "active" ||
+          s.status === "trialing"
+        );
         if (matchedSub) {
           subscriptionId = matchedSub.id;
         }
@@ -234,11 +245,11 @@ export async function fetchPolarCheckout(checkoutId: string) {
   return {
     id: data.id as string,
     status: data.status as string,
-    priceId: data.product_price_id as string,
+    priceId: (data.product_price_id || data.price_id) as string,
     productId: data.product_id as string,
     amount: (data.total_amount || data.amount || 0) / 100,
     currency: (data.currency || "inr").toUpperCase(),
-    customerEmail: data.customer_email as string | undefined,
+    customerEmail: customerEmail as string | undefined,
     metadata: data.metadata || {},
     subscriptionId: subscriptionId as string | undefined,
   };
