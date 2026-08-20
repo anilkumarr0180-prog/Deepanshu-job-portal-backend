@@ -96,6 +96,35 @@ export const initSubscriptionExpirationJob = () => {
           }).catch((err) => console.error("Expiring soon email failed:", err));
         }
       }
+      // 3. Process Overdue Autopay Subscriptions (3-Day Grace Period Elapsed)
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      const overdueAutopaySubs = await Subscription.find({
+        status: "active",
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: { $lte: threeDaysAgo },
+      }).populate("userId planId");
+
+      for (const sub of overdueAutopaySubs) {
+        sub.status = "past_due";
+        await sub.save();
+
+        const user = sub.userId as any;
+        const plan = sub.planId as any;
+
+        if (user?._id) {
+          createNotification({
+            recipientId: user._id,
+            type: NOTIFICATION_TYPES.SYSTEM_ALERT,
+            title: "Payment Past Due ⚠️",
+            body: `We were unable to auto-renew your ${plan?.name || "Premium"} plan. Please update your payment method to restore features.`,
+            link: user.role === "recruiter" ? "/recruiter/billing" : "/candidate/billing",
+          }).catch(() => {});
+        }
+      }
+
+      if (overdueAutopaySubs.length > 0) {
+        console.log(`[Subscription Expiration Job] Marked ${overdueAutopaySubs.length} overdue subscriptions as past_due.`);
+      }
     } catch (error) {
       console.error("[Subscription Expiration Job] Error:", error);
     }

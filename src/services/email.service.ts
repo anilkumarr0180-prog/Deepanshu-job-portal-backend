@@ -1028,3 +1028,83 @@ export const sendSubscriptionExpiredEmail = async (params: {
     return false;
   }
 };
+
+/*
+|--------------------------------------------------------------------------
+| Send Subscription Auto-Renewed Email (Autopay Successful)
+|--------------------------------------------------------------------------
+*/
+export const sendSubscriptionRenewedEmail = async (params: {
+  userName: string;
+  userEmail: string;
+  planName: string;
+  nextRenewalDate: string;
+  amountPaid: string;
+  invoiceNumber: string;
+  role: string;
+}): Promise<boolean> => {
+  const { userName, userEmail, planName, nextRenewalDate, amountPaid, invoiceNumber, role } = params;
+  const from = getFromHeader();
+  const billingUrl = `http://localhost:5173/${role === "recruiter" ? "recruiter" : "candidate"}/billing`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #030712; color: #f8fafc; margin: 0; padding: 20px; }
+        .wrapper { max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 24px; border: 1px solid #1e293b; overflow: hidden; }
+        .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 32px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 24px; font-weight: 800; }
+        .content { padding: 32px 30px; }
+        .receipt-box { background: #1e293b; border-radius: 16px; padding: 20px; margin: 20px 0; border: 1px solid #334155; }
+        .row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; color: #cbd5e1; }
+        .row:last-child { margin-bottom: 0; }
+        .bold { font-weight: 700; color: #ffffff; }
+        .button { display: inline-block; width: 100%; box-sizing: border-box; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; text-align: center; padding: 16px; border-radius: 14px; font-size: 15px; font-weight: 700; text-decoration: none; margin-top: 10px; }
+        .footer { padding: 20px 30px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #1e293b; }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <div class="header">
+          <h1>Subscription Auto-Renewed 🔄</h1>
+        </div>
+        <div class="content">
+          <p style="color: #cbd5e1; font-size: 15px; line-height: 1.6;">
+            Hi <strong>${userName}</strong>,<br>
+            Your <strong>${planName}</strong> plan has successfully auto-renewed. Your premium quotas, inmail credits, and active features have been refreshed.
+          </p>
+          <div class="receipt-box">
+            <div class="row"><span>Invoice ID:</span><span class="bold">${invoiceNumber}</span></div>
+            <div class="row"><span>Amount Charged:</span><span class="bold">${amountPaid}</span></div>
+            <div class="row"><span>Next Billing Date:</span><span class="bold">${nextRenewalDate}</span></div>
+            <div class="row"><span>Autopay Status:</span><span class="bold" style="color: #34d399;">Active (Auto-Renew)</span></div>
+          </div>
+          <a href="${billingUrl}" class="button">View Billing Dashboard →</a>
+        </div>
+        <div class="footer">
+          <p>JobsBox Portal • Thank you for being a premium subscriber!</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    const { transporter } = await getTransporter();
+    await transporter.sendMail({
+      from,
+      to: userEmail,
+      subject: `Subscription Auto-Renewed: ${planName} - JobsBox`,
+      html,
+    });
+    console.log(`[Email Sent] Auto-renewal receipt sent to ${userEmail}`);
+    return true;
+  } catch (error) {
+    console.error("Failed to send subscription renewal email:", error);
+    return false;
+  }
+};
+
