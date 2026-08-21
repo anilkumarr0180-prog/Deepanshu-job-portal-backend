@@ -2,68 +2,45 @@ import cloudinary from "../config/cloudnary";
 
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
-
-/*
-|--------------------------------------------------------------------------
-| Cloudinary Upload Types
-|--------------------------------------------------------------------------
-*/
-
-export type CloudinaryUploadType =
-  | "profile"
-  | "company-logo"
-  | "resume";
-
-/*
-|--------------------------------------------------------------------------
-| Cloudinary Upload Presets
-|--------------------------------------------------------------------------
-*/
-
-const UPLOAD_PRESETS: Record<
+import {
+  CLOUDINARY_FOLDERS,
   CloudinaryUploadType,
-  string
-> = {
-  profile: "jobportal_profile",
-  "company-logo": "jobportal_company_logo",
-  resume: "jobportal_resume",
-};
+} from "../constants/cloudinary";
+
+export { CloudinaryUploadType, CLOUDINARY_FOLDERS };
 
 /*
-|--------------------------------------------------------------------------
+|-------------------------------------------------------------------------
 | Cloudinary Service
-|--------------------------------------------------------------------------
-*/
+|-------------------------------------------------------------------------*/
 
 class CloudinaryService {
   /*
-  |--------------------------------------------------------------------------
+  |------------------------------------------------------------------------
   | Generate Signed Upload Signature
-  |--------------------------------------------------------------------------
+  |------------------------------------------------------------------------
   |
-  | The Cloudinary API secret stays on the backend.
+  | Generates a secure HMAC signature for direct client-to-Cloudinary
+  | authenticated uploads without requiring manual dashboard upload presets.
+  |
+  | Cloudinary API secret stays on the backend.
   | It is NEVER returned to the frontend.
   |
   */
 
-  generateUploadSignature(
-    type: CloudinaryUploadType
-  ) {
-    const uploadPreset = UPLOAD_PRESETS[type];
+  generateUploadSignature(type: CloudinaryUploadType) {
+    const folder = CLOUDINARY_FOLDERS[type];
 
-    if (!uploadPreset) {
+    if (!folder) {
       throw new AppError(
         "Invalid Cloudinary upload type.",
         HTTP_STATUS.BAD_REQUEST
       );
     }
 
-    const timestamp = Math.round(
-      Date.now() / 1000
-    );
+    const timestamp = Math.round(Date.now() / 1000);
 
-    const apiSecret =
-      cloudinary.config().api_secret;
+    const apiSecret = cloudinary.config().api_secret;
 
     if (!apiSecret) {
       throw new AppError(
@@ -72,38 +49,36 @@ class CloudinaryService {
       );
     }
 
-    const signature =
-      cloudinary.utils.api_sign_request(
-        {
-          timestamp,
-          upload_preset: uploadPreset,
-        },
-        apiSecret
-      );
+    // Parameters to be signed by Cloudinary API secret
+    const paramsToSign: Record<string, any> = {
+      folder,
+      timestamp,
+    };
+
+    const signature = cloudinary.utils.api_sign_request(
+      paramsToSign,
+      apiSecret
+    );
 
     return {
       timestamp,
       signature,
-      uploadPreset,
-      cloudName:
-        cloudinary.config().cloud_name,
-      apiKey:
-        cloudinary.config().api_key,
+      folder,
+      cloudName: cloudinary.config().cloud_name,
+      apiKey: cloudinary.config().api_key,
     };
   }
 
   /*
-  |--------------------------------------------------------------------------
+-------------------------------------------------------------------------
   | Generate Authenticated URL
-  |--------------------------------------------------------------------------
+  |------------------------------------------------------------------------
   |
   | Used primarily for private resumes.
   |
   */
 
-  generateAuthenticatedUrl(
-    publicId: string
-  ) {
+  generateAuthenticatedUrl(publicId: string) {
     if (!publicId) {
       throw new AppError(
         "Cloudinary public ID is required.",
@@ -120,10 +95,10 @@ class CloudinaryService {
   }
 
   /*
-  |--------------------------------------------------------------------------
-  | Delete Cloudinary Asset
-  |--------------------------------------------------------------------------
-  |
+|------------------------------------------------------------------------
+| Delete Cloudinary Asset
+|------------------------------------------------------------------------
+|
   | Used when replacing or removing assets.
   |
   */
@@ -139,20 +114,16 @@ class CloudinaryService {
       );
     }
 
-    return cloudinary.uploader.destroy(
-      publicId,
-      {
-        resource_type: resourceType,
-        invalidate: true,
-      }
-    );
+    return cloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+      invalidate: true,
+    });
   }
 }
 
 /*
-|--------------------------------------------------------------------------
+|-------------------------------------------------------------------------
 | Export Singleton Service
-|--------------------------------------------------------------------------
-*/
+|------------------------------------------------------------------------*/
 
 export default new CloudinaryService();

@@ -7,6 +7,7 @@ import { generalRateLimiter } from "./config/rate-limit";
 
 import authRoutes from "./routes/auth.routes";
 import jobRoutes from "./routes/job.routes";
+import postRoutes from "./routes/post.routes";
 import applicationRoutes from "./routes/application.routes";
 import profileRoutes from "./routes/profile.routes";
 import dashboardRoutes from "./routes/dashboard.route";
@@ -44,6 +45,7 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+
       callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -95,6 +97,7 @@ if (process.env.NODE_ENV === "development") {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/jobs", jobRoutes);
+app.use("/api/posts", postRoutes);
 app.use("/api", applicationRoutes);
 app.use("/api", profileRoutes);
 app.use("/api/dashboard", dashboardRoutes);

@@ -90,3 +90,43 @@ export const authMiddleware = (
     throw error;
   }
 };
+
+/*
+|--------------------------------------------------------------------------
+| Optional Authentication Middleware
+|--------------------------------------------------------------------------
+|
+| Extracts and verifies token if present, but does not block if absent or invalid.
+| Attaches req.user when valid token is provided.
+|--------------------------------------------------------------------------
+*/
+export const optionalAuthMiddleware = (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): void => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return next();
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  if (!token || token.trim() === "") {
+    return next();
+  }
+
+  try {
+    const decodedUser = verifyAccessToken(token);
+
+    req.user = {
+      userId: decodedUser.userId,
+      role: decodedUser.role,
+    };
+  } catch (_error) {
+    // Silently continue for unauthenticated / invalid token in optional auth
+  }
+
+  next();
+};
