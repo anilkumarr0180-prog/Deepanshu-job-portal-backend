@@ -133,11 +133,6 @@ export const createJob = async (
 
   const { company, recruiterProfile } = auth;
 
-  if (!company.isVerified) {
-    company.isVerified = true;
-    await company.save();
-  }
-
   let salaryMin = Number(jobData.salaryMin) || 0;
   let salaryMax = Number(jobData.salaryMax) || 0;
 
@@ -192,6 +187,7 @@ export const getJobs = async (
 ) => {
   const query: Record<string, unknown> = {
     status: JOB_STATUS.ACTIVE,
+    isDeleted: false,
   };
 
   /*
@@ -361,28 +357,54 @@ export const getJobs = async (
   const Company = (await import("../models/company.model")).default;
   const RecruiterProfile = (await import("../models/recruiter-profile.model")).default;
 
-  const enrichedJobs = await Promise.all(
-    jobs.map(async (job: any) => {
-      let companyLogo = job.companyId?.logo || job.recruiterId?.profilePicture || "";
-
-      if (!companyLogo && job.recruiterId?._id) {
-        const company = await Company.findOne({ recruiterId: job.recruiterId._id }).select("logo");
-        if (company?.logo) {
-          companyLogo = company.logo;
-        } else {
-          const profile = await RecruiterProfile.findOne({ userId: job.recruiterId._id }).select("profilePicture");
-          if (profile?.profilePicture) {
-            companyLogo = profile.profilePicture;
-          }
-        }
-      }
-
-      return {
-        ...job,
-        companyLogo,
-      };
-    })
+  // Batch-resolve missing logos in a single parallel query (Zero N+1)
+  const missingRecruiterIds = Array.from(
+    new Set(
+      jobs
+        .filter((job: any) => !(job.companyId?.logo || job.recruiterId?.profilePicture) && job.recruiterId?._id)
+        .map((job: any) => job.recruiterId._id.toString())
+    )
   );
+
+  const companyLogoMap = new Map<string, string>();
+  const profilePicMap = new Map<string, string>();
+
+  if (missingRecruiterIds.length > 0) {
+    const [companies, profiles] = await Promise.all([
+      Company.find({ recruiterId: { $in: missingRecruiterIds }, isDeleted: false })
+        .select("recruiterId logo")
+        .lean(),
+      RecruiterProfile.find({ userId: { $in: missingRecruiterIds }, isDeleted: false })
+        .select("userId profilePicture")
+        .lean(),
+    ]);
+
+    companies.forEach((c: any) => {
+      if (c.logo && c.recruiterId) {
+        companyLogoMap.set(c.recruiterId.toString(), c.logo);
+      }
+    });
+
+    profiles.forEach((p: any) => {
+      if (p.profilePicture && p.userId) {
+        profilePicMap.set(p.userId.toString(), p.profilePicture);
+      }
+    });
+  }
+
+  const enrichedJobs = jobs.map((job: any) => {
+    let companyLogo = job.companyId?.logo || job.recruiterId?.profilePicture || "";
+
+    if (!companyLogo && job.recruiterId?._id) {
+      const recIdStr = job.recruiterId._id.toString();
+      companyLogo = companyLogoMap.get(recIdStr) || profilePicMap.get(recIdStr) || "";
+    }
+
+    return {
+      ...job,
+      companyLogo,
+    };
+  });
 
   return {
     jobs: enrichedJobs,
@@ -408,6 +430,7 @@ export const getMyJobs = async (
 ) => {
   const jobs = await Job.find({
     recruiterId,
+    isDeleted: false,
   })
     .sort({
       createdAt: -1,
@@ -428,7 +451,7 @@ export const getJobById = async (
   jobId: string,
   user?: { userId: string; role: string }
 ) => {
-  const job = await Job.findById(jobId)
+  const job = await Job.findOne({ _id: jobId, isDeleted: false })
     .populate("recruiterId", "name email profilePicture")
     .populate("companyId", "name logo website location description email phone address city state country")
     .lean();
@@ -440,13 +463,24 @@ export const getJobById = async (
     );
   }
 
-  // Restrict access for non-ACTIVE jobs (only owner recruiter or admin can view draft/closed jobs)
+  // Restrict access for non-ACTIVE jobs (only owner recruiter, authorized company teammates, or admin can view draft/closed jobs)
   if (job.status !== JOB_STATUS.ACTIVE) {
     const rawRecruiterId = (job.recruiterId as unknown as { _id?: Types.ObjectId })._id || job.recruiterId;
-    const isOwner = user && user.userId === rawRecruiterId.toString();
-    const isAdmin = user && user.role === USER_ROLES.ADMIN;
+    const isOwner = Boolean(user && user.userId === rawRecruiterId?.toString());
+    const isAdmin = Boolean(user && user.role === USER_ROLES.ADMIN);
 
-    if (!isOwner && !isAdmin) {
+    let isCompanyTeammate = false;
+    if (user && user.role === USER_ROLES.RECRUITER && !isOwner && !isAdmin) {
+      const rawCompanyId = (job.companyId as unknown as { _id?: Types.ObjectId })?._id || job.companyId;
+      if (rawCompanyId) {
+        const auth = await getAuthorizedCompanyForRecruiter(user.userId);
+        if (auth && auth.company._id.toString() === rawCompanyId.toString()) {
+          isCompanyTeammate = true;
+        }
+      }
+    }
+
+    if (!isOwner && !isAdmin && !isCompanyTeammate) {
       throw new AppError(
         "Job not found.",
         HTTP_STATUS.NOT_FOUND
@@ -500,19 +534,7 @@ export const updateJob = async (
 
   const { company } = auth;
 
-  if (!company.isVerified) {
-    if (process.env.NODE_ENV !== "production") {
-      company.isVerified = true;
-      await company.save();
-    } else if (updateData.status && updateData.status !== "DRAFT") {
-      throw new AppError(
-        "Your company must be verified before publishing active jobs.",
-        HTTP_STATUS.FORBIDDEN
-      );
-    }
-  }
-
-  const job = await Job.findById(jobId);
+  const job = await Job.findOne({ _id: jobId, isDeleted: false });
 
   if (!job) {
     throw new AppError(
@@ -574,7 +596,7 @@ export const deleteJob = async (
   recruiterId: string
 ) => {
   const Application = (await import("../models/application.model")).default;
-  const existingApplication = await Application.findOne({ jobId });
+  const existingApplication = await Application.findOne({ jobId, isDeleted: false });
 
   if (existingApplication) {
     throw new AppError(
@@ -583,7 +605,7 @@ export const deleteJob = async (
     );
   }
 
-  const job = await Job.findById(jobId);
+  const job = await Job.findOne({ _id: jobId, isDeleted: false });
 
   if (!job) {
     throw new AppError(
@@ -603,7 +625,9 @@ export const deleteJob = async (
     );
   }
 
-  await job.deleteOne();
+  job.isDeleted = true;
+  job.status = JOB_STATUS.CLOSED;
+  await job.save();
 
   return job;
 };

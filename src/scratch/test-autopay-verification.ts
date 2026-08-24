@@ -2,6 +2,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import mongoose from "mongoose";
+import crypto from "crypto";
+import { env } from "../config/env";
 import User from "../models/user.model";
 import SubscriptionPlan from "../models/subscription-plan.model";
 import Subscription from "../models/subscription.model";
@@ -99,9 +101,15 @@ async function runAutopayVerification() {
     },
   };
 
+  const webhookRawBody = JSON.stringify(polarWebhookPayload);
+  const secretKey = env.POLAR_WEBHOOK_SECRET?.startsWith("whsec_")
+    ? Buffer.from(env.POLAR_WEBHOOK_SECRET.replace("whsec_", ""), "base64")
+    : Buffer.from(env.POLAR_WEBHOOK_SECRET || "default_test_secret", "utf-8");
+  const computedSig = crypto.createHmac("sha256", secretKey).update(Buffer.from(webhookRawBody, "utf-8")).digest("base64");
+
   const webhookResult = await handlePolarWebhookEvent(
-    JSON.stringify(polarWebhookPayload),
-    "dev_signature_override",
+    webhookRawBody,
+    computedSig,
     polarWebhookPayload
   );
 

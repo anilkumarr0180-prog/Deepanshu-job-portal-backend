@@ -1,7 +1,7 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface IConversation extends Document {
-  jobId: Types.ObjectId;
+  jobId?: Types.ObjectId;
   candidateId: Types.ObjectId;
   recruiterId: Types.ObjectId;
   lastMessageId?: Types.ObjectId;
@@ -16,7 +16,7 @@ const conversationSchema = new Schema<IConversation>(
     jobId: {
       type: Schema.Types.ObjectId,
       ref: "Job",
-      required: true,
+      required: false,
       index: true,
     },
 
@@ -58,7 +58,7 @@ const conversationSchema = new Schema<IConversation>(
   }
 );
 
-// Enforce unique conversation per (job, candidate, recruiter) tuple
+// Enforce unique conversation per (job, candidate, recruiter) tuple when jobId is present
 conversationSchema.index(
   {
     jobId: 1,
@@ -67,6 +67,7 @@ conversationSchema.index(
   },
   {
     unique: true,
+    sparse: true,
   }
 );
 

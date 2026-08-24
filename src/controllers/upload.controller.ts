@@ -170,8 +170,26 @@ export const getAuthenticatedResumeUrl = async (
       );
     }
   } else if (role === USER_ROLES.RECRUITER) {
-    // Recruiter can view candidate resumes for jobs posted by recruiter
-    const recruiterJobs = await Job.find({ recruiterId: userId }).select("_id");
+    // Recruiter can view candidate resumes for jobs posted by recruiter or their company teammates
+    const { getAuthorizedCompanyForRecruiter } = await import(
+      "../services/company.service"
+    );
+    const auth = await getAuthorizedCompanyForRecruiter(userId);
+
+    const jobQuery: Record<string, unknown> = {
+      isDeleted: false,
+    };
+
+    if (auth?.company?._id) {
+      jobQuery.$or = [
+        { recruiterId: userId },
+        { companyId: auth.company._id },
+      ];
+    } else {
+      jobQuery.recruiterId = userId;
+    }
+
+    const recruiterJobs = await Job.find(jobQuery).select("_id");
     const jobIds = recruiterJobs.map((j) => j._id);
 
     let isAuthorized = false;
@@ -180,6 +198,7 @@ export const getAuthenticatedResumeUrl = async (
       const app = await Application.findOne({
         _id: applicationId,
         jobId: { $in: jobIds },
+        isDeleted: false,
       });
       if (app) {
         isAuthorized = true;
@@ -189,6 +208,7 @@ export const getAuthenticatedResumeUrl = async (
       const app = await Application.findOne({
         applicantId: candidateUserId,
         jobId: { $in: jobIds },
+        isDeleted: false,
       });
       if (app) {
         isAuthorized = true;
@@ -197,6 +217,7 @@ export const getAuthenticatedResumeUrl = async (
     } else if (targetPublicId) {
       const app = await Application.findOne({
         jobId: { $in: jobIds },
+        isDeleted: false,
         $or: [{ resumePublicId: targetPublicId }, { resume: targetPublicId }],
       });
       if (app) isAuthorized = true;

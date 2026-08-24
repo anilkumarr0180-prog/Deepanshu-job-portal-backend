@@ -1,3 +1,4 @@
+import "./company.model";
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface IRecruiterSocialLinks {

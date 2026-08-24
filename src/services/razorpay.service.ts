@@ -115,6 +115,22 @@ export async function createRazorpayOrder(params: {
   return data;
 }
 
+export async function fetchRazorpayOrder(orderId: string) {
+  const response = await fetch(`https://api.razorpay.com/v1/orders/${orderId}`, {
+    method: "GET",
+    headers: {
+      Authorization: getAuthHeader(),
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Razorpay Fetch Order Failed: ${response.status} ${errorText}`);
+  }
+
+  return await response.json();
+}
+
 export async function fetchRazorpaySubscription(subscriptionId: string) {
   const response = await fetch(`https://api.razorpay.com/v1/subscriptions/${subscriptionId}`, {
     method: "GET",
@@ -171,26 +187,36 @@ export function verifyPaymentSignature(params: {
     throw new Error("Razorpay RAZORPAY_KEY_SECRET is not configured.");
   }
 
-  let textToSign = "";
-  const subId = params.subscriptionId || (params.orderId && params.orderId.startsWith("sub_") ? params.orderId : undefined);
-  const ordId = params.orderId && params.orderId.startsWith("order_") ? params.orderId : params.orderId;
+  // Priority to order verification if an orderId is provided (e.g. "order_...")
+  if (params.orderId && !params.orderId.startsWith("sub_")) {
+    const textToSign = `${params.orderId}|${params.paymentId}`;
+    const generatedSignature = crypto
+      .createHmac("sha256", keySecret)
+      .update(textToSign)
+      .digest("hex");
+    if (safeCompareSignatures(generatedSignature, params.signature)) {
+      return true;
+    }
+  }
 
+  // Check subscription signature if subscriptionId is provided or orderId starts with "sub_"
+  const subId = params.subscriptionId || (params.orderId && params.orderId.startsWith("sub_") ? params.orderId : undefined);
   if (subId) {
-    // Razorpay subscription signature is: payment_id|subscription_id
-    textToSign = `${params.paymentId}|${subId}`;
-  } else if (ordId) {
-    // Razorpay order signature is: order_id|payment_id
-    textToSign = `${ordId}|${params.paymentId}`;
-  } else {
+    const textToSign = `${params.paymentId}|${subId}`;
+    const generatedSignature = crypto
+      .createHmac("sha256", keySecret)
+      .update(textToSign)
+      .digest("hex");
+    if (safeCompareSignatures(generatedSignature, params.signature)) {
+      return true;
+    }
+  }
+
+  if (!params.orderId && !subId) {
     throw new Error("Either orderId or subscriptionId must be provided to verify payment signature.");
   }
 
-  const generatedSignature = crypto
-    .createHmac("sha256", keySecret)
-    .update(textToSign)
-    .digest("hex");
-
-  return safeCompareSignatures(generatedSignature, params.signature);
+  return false;
 }
 
 export function verifyWebhookSignature(rawBody: string | Buffer, signature: string): boolean {
@@ -204,14 +230,5 @@ export function verifyWebhookSignature(rawBody: string | Buffer, signature: stri
     .update(rawBody)
     .digest("hex");
 
-  if (safeCompareSignatures(expectedSignature, signature)) {
-    return true;
-  }
-
-  if (process.env.NODE_ENV === "development") {
-    console.warn("Notice: Razorpay Webhook signature mismatch in dev mode. Allowing event processing.");
-    return true;
-  }
-
-  return false;
+  return safeCompareSignatures(expectedSignature, signature);
 }

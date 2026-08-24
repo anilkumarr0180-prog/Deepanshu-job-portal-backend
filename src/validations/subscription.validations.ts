@@ -65,8 +65,9 @@ export const verifyRazorpayPaymentSchema = z.object({
     planCode: z
       .string()
       .trim()
-      .min(1, "planCode is required.")
-      .max(100, "planCode cannot exceed 100 characters."),
+      .max(100, "planCode cannot exceed 100 characters.")
+      .optional()
+      .nullable(),
     couponCode: z
       .string()
       .trim()

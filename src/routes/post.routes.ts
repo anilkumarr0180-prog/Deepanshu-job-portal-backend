@@ -1,40 +1,35 @@
 import { Router } from "express";
-
 import {
   createPost,
+  repostPost,
   getPosts,
   getPostById,
   updatePost,
   deletePost,
 } from "../controllers/post.controller";
-
 import {
   createPostReaction,
   deletePostReaction,
 } from "../controllers/post-reaction.controller";
-
 import {
   createPostComment,
   getPostComments,
   updatePostComment,
   deletePostComment,
 } from "../controllers/post-comment.controller";
-
 import { authMiddleware, optionalAuthMiddleware } from "../middleware/auth.middleware";
 import { validate } from "../middleware/validation.middleware";
-
 import {
   createPostSchema,
+  repostPostSchema,
   updatePostSchema,
   getPostsQuerySchema,
   postIdParamSchema,
 } from "../validations/post.validations";
-
 import {
   createPostReactionSchema,
   deletePostReactionSchema,
 } from "../validations/post-reaction.validations";
-
 import {
   createPostCommentSchema,
   getPostCommentsSchema,
@@ -44,14 +39,6 @@ import {
 
 const router = Router();
 
-/*
-|--------------------------------------------------------------------------
-| Get All Posts
-|--------------------------------------------------------------------------
-| GET /api/posts
-| Access: Public / Optional Authentication
-|--------------------------------------------------------------------------
-*/
 router.get(
   "/",
   optionalAuthMiddleware,
@@ -59,14 +46,6 @@ router.get(
   getPosts
 );
 
-/*
-|--------------------------------------------------------------------------
-| Create Post
-|--------------------------------------------------------------------------
-| POST /api/posts
-| Access: Authenticated users
-|--------------------------------------------------------------------------
-*/
 router.post(
   "/",
   authMiddleware,
@@ -74,14 +53,13 @@ router.post(
   createPost
 );
 
-/*
-|--------------------------------------------------------------------------
-| Like Post
-|--------------------------------------------------------------------------
-| POST /api/posts/:id/reactions
-| Access: Authenticated users
-|--------------------------------------------------------------------------
-*/
+router.post(
+  "/:id/repost",
+  authMiddleware,
+  validate(repostPostSchema),
+  repostPost
+);
+
 router.post(
   "/:id/reactions",
   authMiddleware,
@@ -89,14 +67,6 @@ router.post(
   createPostReaction
 );
 
-/*
-|--------------------------------------------------------------------------
-| Unlike Post
-|--------------------------------------------------------------------------
-| DELETE /api/posts/:id/reactions
-| Access: Authenticated users
-|--------------------------------------------------------------------------
-*/
 router.delete(
   "/:id/reactions",
   authMiddleware,
@@ -104,14 +74,6 @@ router.delete(
   deletePostReaction
 );
 
-/*
-|--------------------------------------------------------------------------
-| Create Comment
-|--------------------------------------------------------------------------
-| POST /api/posts/:id/comments
-| Access: Authenticated users
-|--------------------------------------------------------------------------
-*/
 router.post(
   "/:id/comments",
   authMiddleware,
@@ -119,30 +81,12 @@ router.post(
   createPostComment
 );
 
-/*
-|--------------------------------------------------------------------------
-| Get Comments
-|--------------------------------------------------------------------------
-| GET /api/posts/:id/comments
-| Access: Public
-|--------------------------------------------------------------------------
-*/
 router.get(
   "/:id/comments",
   validate(getPostCommentsSchema),
   getPostComments
 );
 
-/*
-|--------------------------------------------------------------------------
-| Update Comment
-|--------------------------------------------------------------------------
-| PUT /api/posts/:postId/comments/:commentId
-| Access: Authenticated users
-|
-| Ownership is checked inside the service.
-|--------------------------------------------------------------------------
-*/
 router.put(
   "/:postId/comments/:commentId",
   authMiddleware,
@@ -150,17 +94,6 @@ router.put(
   updatePostComment
 );
 
-/*
-|--------------------------------------------------------------------------
-| Delete Comment
-|--------------------------------------------------------------------------
-| DELETE /api/posts/:postId/comments/:commentId
-| Access: Authenticated users
-|
-| Ownership is checked inside the service.
-| Uses soft deletion.
-|--------------------------------------------------------------------------
-*/
 router.delete(
   "/:postId/comments/:commentId",
   authMiddleware,
@@ -168,14 +101,6 @@ router.delete(
   deletePostComment
 );
 
-/*
-|--------------------------------------------------------------------------
-| Get Post By Id
-|--------------------------------------------------------------------------
-| GET /api/posts/:id
-| Access: Public / Optional Authentication
-|--------------------------------------------------------------------------
-*/
 router.get(
   "/:id",
   optionalAuthMiddleware,
@@ -183,14 +108,6 @@ router.get(
   getPostById
 );
 
-/*
-|--------------------------------------------------------------------------
-| Update Post
-|--------------------------------------------------------------------------
-| PUT /api/posts/:id
-| Access: Authenticated users
-|--------------------------------------------------------------------------
-*/
 router.put(
   "/:id",
   authMiddleware,
@@ -199,16 +116,6 @@ router.put(
   updatePost
 );
 
-/*
-|--------------------------------------------------------------------------
-| Delete Post
-|--------------------------------------------------------------------------
-| DELETE /api/posts/:id
-| Access: Authenticated users
-|
-| Uses soft deletion.
-|--------------------------------------------------------------------------
-*/
 router.delete(
   "/:id",
   authMiddleware,

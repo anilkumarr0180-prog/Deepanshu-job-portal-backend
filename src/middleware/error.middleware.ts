@@ -1,3 +1,4 @@
+
 import { NextFunction, Request, Response } from "express";
 import { AppError } from "../utils/app-error";
 
@@ -53,11 +54,14 @@ export const errorMiddleware = (
     return;
   }
 
-  console.error(err);
+  console.error("[Unhandled Server Error]:", err);
+
+  const isProduction = process.env.NODE_ENV === "production";
+  const clientMessage = isProduction ? "Internal Server Error" : (err.message || "Internal Server Error");
 
   res.status(500).json({
     success: false,
-    message: err.message || "Internal Server Error",
+    message: clientMessage,
     errors: [],
   });
-};
+};

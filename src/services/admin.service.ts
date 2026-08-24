@@ -90,26 +90,26 @@ export const getDashboardStats = async () => {
     recentUsers,
     recentJobs,
   ] = await Promise.all([
-    User.countDocuments(),
-    User.countDocuments({ role: USER_ROLES.RECRUITER }),
-    User.countDocuments({ role: USER_ROLES.CANDIDATE }),
-    User.countDocuments({ role: USER_ROLES.RECRUITER, isBlocked: false }),
-    User.countDocuments({ role: USER_ROLES.CANDIDATE, isBlocked: false }),
-    User.countDocuments({ isBlocked: true }),
-    Job.countDocuments(),
-    Job.countDocuments({ status: JOB_STATUS.ACTIVE }),
-    Job.countDocuments({ status: JOB_STATUS.CLOSED }),
-    Job.countDocuments({ status: JOB_STATUS.DRAFT }),
-    Application.countDocuments(),
-    Application.countDocuments({ createdAt: { $gte: startOfToday } }),
-    Application.countDocuments({ createdAt: { $gte: startOfWeek } }),
-    Application.countDocuments({ createdAt: { $gte: startOfMonth } }),
-    User.find()
+    User.countDocuments({ isDeleted: false }),
+    User.countDocuments({ role: USER_ROLES.RECRUITER, isDeleted: false }),
+    User.countDocuments({ role: USER_ROLES.CANDIDATE, isDeleted: false }),
+    User.countDocuments({ role: USER_ROLES.RECRUITER, isBlocked: false, isDeleted: false }),
+    User.countDocuments({ role: USER_ROLES.CANDIDATE, isBlocked: false, isDeleted: false }),
+    User.countDocuments({ isBlocked: true, isDeleted: false }),
+    Job.countDocuments({ isDeleted: false }),
+    Job.countDocuments({ status: JOB_STATUS.ACTIVE, isDeleted: false }),
+    Job.countDocuments({ status: JOB_STATUS.CLOSED, isDeleted: false }),
+    Job.countDocuments({ status: JOB_STATUS.DRAFT, isDeleted: false }),
+    Application.countDocuments({ isDeleted: false }),
+    Application.countDocuments({ createdAt: { $gte: startOfToday }, isDeleted: false }),
+    Application.countDocuments({ createdAt: { $gte: startOfWeek }, isDeleted: false }),
+    Application.countDocuments({ createdAt: { $gte: startOfMonth }, isDeleted: false }),
+    User.find({ isDeleted: false })
       .sort({ createdAt: -1 })
       .limit(5)
       .select("-password")
       .lean(),
-    Job.find()
+    Job.find({ isDeleted: false })
       .sort({ createdAt: -1 })
       .limit(5)
       .populate("recruiterId", "name email")
@@ -290,7 +290,9 @@ export const unblockUser = async (userId: string) => {
 */
 
 export const getAdminJobs = async (filters: AdminJobFilters = {}) => {
-  const query: Record<string, unknown> = {};
+  const query: Record<string, unknown> = {
+    isDeleted: false,
+  };
 
   if (filters.search) {
     const trimmedSearch = filters.search.trim();
@@ -350,7 +352,8 @@ export const getAdminJobs = async (filters: AdminJobFilters = {}) => {
 */
 
 export const deleteAdminJob = async (jobId: string) => {
-  const existingApplication = await Application.findOne({ jobId });
+  const Application = (await import("../models/application.model")).default;
+  const existingApplication = await Application.findOne({ jobId, isDeleted: false });
 
   if (existingApplication) {
     throw new AppError(
@@ -359,13 +362,15 @@ export const deleteAdminJob = async (jobId: string) => {
     );
   }
 
-  const job = await Job.findById(jobId);
+  const job = await Job.findOne({ _id: jobId, isDeleted: false });
 
   if (!job) {
     throw new AppError("Job not found.", HTTP_STATUS.NOT_FOUND);
   }
 
-  await job.deleteOne();
+  job.isDeleted = true;
+  job.status = JOB_STATUS.CLOSED;
+  await job.save();
 
   return null;
 };

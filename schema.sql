@@ -1,31 +1,39 @@
 -- ==========================================================
--- PRODUCTION POSTGRESQL DATABASE SCHEMA (DrawSQL Compatible)
--- All 20+ Entities with Complete Foreign Key Relationships
+-- PRODUCTION POSTGRESQL / RELATIONAL DATABASE SCHEMA REFERENCE
+-- (DrawSQL & Relational DB Compatible)
+-- All 25+ Entities Aligned with Active Mongoose Models & Indexes
 -- ==========================================================
 
 -- ==========================================================
--- 1. USERS (Core Identity)
+-- 1. USERS (Core Identity & Authentication)
 -- ==========================================================
 CREATE TABLE users (
     id UUID PRIMARY KEY,
-    full_name VARCHAR(150) NOT NULL,
+    name VARCHAR(150) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
+    google_id VARCHAR(255) UNIQUE,
     role VARCHAR(20) NOT NULL DEFAULT 'candidate',
+    profile_picture_url TEXT,
+    resume_url TEXT,
+    phone VARCHAR(20),
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
-    deleted_at TIMESTAMP,
+    is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_users_role_status ON users (role, is_blocked, is_deleted);
+
 -- ==========================================================
--- 2. COMPANIES
+-- 2. COMPANIES (Organization Profiles)
 -- ==========================================================
 CREATE TABLE companies (
     id UUID PRIMARY KEY,
-    company_name VARCHAR(255) NOT NULL,
-    logo_url TEXT,
-    website_url TEXT,
+    name VARCHAR(255) NOT NULL,
+    logo TEXT,
+    website VARCHAR(255),
     industry VARCHAR(150),
     company_size VARCHAR(100),
     founded_year INTEGER,
@@ -38,11 +46,14 @@ CREATE TABLE companies (
     country VARCHAR(100),
     social_links JSONB DEFAULT '{}',
     is_verified BOOLEAN DEFAULT FALSE,
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    deleted_at TIMESTAMP,
+    recruiter_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_companies_verified ON companies (is_verified, is_deleted);
+CREATE INDEX idx_companies_recruiter ON companies (recruiter_id, is_deleted);
 
 -- ==========================================================
 -- 3. RECRUITER PROFILES
@@ -50,19 +61,22 @@ CREATE TABLE companies (
 CREATE TABLE recruiter_profiles (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    company_id UUID REFERENCES companies(id) ON DELETE SET NULL, -- Deprecated legacy link
     designation VARCHAR(150),
     department VARCHAR(150),
     phone VARCHAR(20),
-    profile_picture_url TEXT,
+    profile_picture TEXT,
     bio TEXT,
     social_links JSONB DEFAULT '{}',
-    deleted_at TIMESTAMP,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_recruiter_profiles_company ON recruiter_profiles (company_id, is_deleted);
+
 -- ==========================================================
--- 4. COMPANY RECRUITERS (Canonical Junction)
+-- 4. COMPANY RECRUITERS (Authoritative Multi-Recruiter Membership)
 -- ==========================================================
 CREATE TABLE company_recruiters (
     id UUID PRIMARY KEY,
@@ -77,6 +91,7 @@ CREATE TABLE company_recruiters (
 
 CREATE UNIQUE INDEX idx_company_recruiters_pair ON company_recruiters (company_id, recruiter_profile_id);
 CREATE UNIQUE INDEX idx_company_primary_recruiter ON company_recruiters (company_id) WHERE is_primary = TRUE AND is_deleted = FALSE;
+CREATE INDEX idx_company_recruiters_lookup ON company_recruiters (recruiter_profile_id, is_deleted);
 
 -- ==========================================================
 -- 5. CANDIDATE PROFILES
@@ -87,16 +102,21 @@ CREATE TABLE candidate_profiles (
     headline VARCHAR(255),
     bio TEXT,
     phone VARCHAR(20),
-    profile_picture_url TEXT,
+    profile_picture TEXT,
     resume_url TEXT,
+    resume_public_id TEXT,
+    resume_file_name VARCHAR(255),
     city VARCHAR(100),
     state VARCHAR(100),
     country VARCHAR(100),
+    skills JSONB DEFAULT '[]',
     social_links JSONB DEFAULT '{}',
-    deleted_at TIMESTAMP,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_candidate_profiles_location ON candidate_profiles (city, country);
 
 -- ==========================================================
 -- 6. CANDIDATE EXPERIENCES
@@ -136,7 +156,8 @@ CREATE TABLE candidate_educations (
 -- ==========================================================
 CREATE TABLE skills (
     id UUID PRIMARY KEY,
-    skill_name VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    slug VARCHAR(100) NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -156,11 +177,12 @@ CREATE TABLE candidate_skills (
 CREATE TABLE jobs (
     id UUID PRIMARY KEY,
     company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
-    posted_by UUID REFERENCES recruiter_profiles(id) ON DELETE SET NULL,
-    recruiter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    job_title VARCHAR(255) NOT NULL,
+    posted_by UUID REFERENCES recruiter_profiles(id) ON DELETE SET NULL, -- Deprecated legacy field
+    recruiter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,     -- Authoritative owner
+    title VARCHAR(255) NOT NULL,
     description TEXT NOT NULL,
-    company_name VARCHAR(255) NOT NULL,
+    company VARCHAR(255) NOT NULL,
+    location VARCHAR(100),
     city VARCHAR(100),
     state VARCHAR(100),
     country VARCHAR(100),
@@ -171,15 +193,20 @@ CREATE TABLE jobs (
     salary_period VARCHAR(20) DEFAULT 'yearly',
     employment_type VARCHAR(50) NOT NULL DEFAULT 'full-time',
     experience_level VARCHAR(50) NOT NULL DEFAULT 'mid',
-    status VARCHAR(50) DEFAULT 'published',
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE', -- 'DRAFT', 'ACTIVE', 'CLOSED'
     is_featured BOOLEAN DEFAULT FALSE,
     is_deleted BOOLEAN DEFAULT FALSE,
     published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP,
-    deleted_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_jobs_feed ON jobs (is_featured DESC, status, is_deleted, created_at DESC);
+CREATE INDEX idx_jobs_recruiter ON jobs (recruiter_id, status, is_deleted, created_at DESC);
+CREATE INDEX idx_jobs_recruiter_simple ON jobs (recruiter_id, is_deleted, created_at DESC);
+CREATE INDEX idx_jobs_company ON jobs (company_id, status, is_deleted);
+CREATE INDEX idx_jobs_facets ON jobs (status, is_deleted, employment_type, experience_level);
 
 -- ==========================================================
 -- 11. JOB SKILLS (Junction)
@@ -191,7 +218,7 @@ CREATE TABLE job_skills (
 );
 
 -- ==========================================================
--- 12. JOB APPLICATIONS (With Historical Point-in-Time Snapshots)
+-- 12. JOB APPLICATIONS (With Point-in-Time Resume & Profile Snapshots)
 -- ==========================================================
 CREATE TABLE job_applications (
     id UUID PRIMARY KEY,
@@ -210,17 +237,20 @@ CREATE TABLE job_applications (
     resume_file_name VARCHAR(255),
     cover_letter TEXT,
     interview_details JSONB DEFAULT '{}',
-    status VARCHAR(50) DEFAULT 'applied',
+    status VARCHAR(50) DEFAULT 'applied', -- 'applied', 'under_review', 'shortlisted', 'interview', 'hired', 'rejected'
     is_deleted BOOLEAN DEFAULT FALSE,
-    deleted_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX idx_unique_job_applicant ON job_applications (job_id, applicant_id);
+CREATE UNIQUE INDEX idx_unique_job_applicant ON job_applications (job_id, applicant_id) WHERE is_deleted = FALSE;
+CREATE INDEX idx_job_applications_candidate ON job_applications (applicant_id, is_deleted, created_at DESC);
+CREATE INDEX idx_job_applications_candidate_status ON job_applications (applicant_id, status);
+CREATE INDEX idx_job_applications_job_status ON job_applications (job_id, status, is_deleted);
+CREATE INDEX idx_job_applications_job_sort ON job_applications (job_id, is_deleted, created_at DESC);
 
 -- ==========================================================
--- 13. SAVED JOBS
+-- 13. SAVED JOBS (Candidate Bookmarks)
 -- ==========================================================
 CREATE TABLE saved_jobs (
     id UUID PRIMARY KEY,
@@ -231,14 +261,67 @@ CREATE TABLE saved_jobs (
 );
 
 CREATE UNIQUE INDEX idx_unique_saved_job ON saved_jobs (user_id, job_id);
+CREATE INDEX idx_saved_jobs_user_sort ON saved_jobs (user_id, created_at DESC);
 
 -- ==========================================================
--- 14. SUBSCRIPTION PLANS
+-- 14. POSTS (Community Feed)
+-- ==========================================================
+CREATE TABLE posts (
+    id UUID PRIMARY KEY,
+    author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    media_url TEXT,
+    media_public_id TEXT,
+    is_published BOOLEAN NOT NULL DEFAULT TRUE,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    likes_count INTEGER NOT NULL DEFAULT 0,
+    comments_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_posts_feed ON posts (is_published, is_deleted, created_at DESC);
+CREATE INDEX idx_posts_author ON posts (author_id, is_deleted, created_at DESC);
+
+-- ==========================================================
+-- 15. POST COMMENTS (Threaded Single-Level Tree)
+-- ==========================================================
+CREATE TABLE post_comments (
+    id UUID PRIMARY KEY,
+    post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    parent_comment_id UUID REFERENCES post_comments(id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_post_comments_tree ON post_comments (post_id, parent_comment_id, is_deleted, created_at ASC);
+CREATE INDEX idx_post_comments_post ON post_comments (post_id, is_deleted, created_at ASC);
+
+-- ==========================================================
+-- 16. POST REACTIONS (Idempotent Likes)
+-- ==========================================================
+CREATE TABLE post_reactions (
+    id UUID PRIMARY KEY,
+    post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(20) NOT NULL DEFAULT 'like',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_post_reactions_unique ON post_reactions (post_id, user_id);
+
+-- ==========================================================
+-- 17. SUBSCRIPTION PLANS
 -- ==========================================================
 CREATE TABLE subscription_plans (
     id UUID PRIMARY KEY,
     code VARCHAR(100) NOT NULL UNIQUE,
     name VARCHAR(150) NOT NULL,
+    usd_price NUMERIC(10,2),
     description TEXT NOT NULL,
     target_role VARCHAR(50) NOT NULL,
     price NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -247,6 +330,7 @@ CREATE TABLE subscription_plans (
     features JSONB DEFAULT '{}',
     provider VARCHAR(50) DEFAULT 'razorpay',
     provider_plan_id VARCHAR(255),
+    provider_mappings JSONB DEFAULT '{}',
     is_active BOOLEAN DEFAULT TRUE,
     is_popular BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -254,15 +338,15 @@ CREATE TABLE subscription_plans (
 );
 
 -- ==========================================================
--- 15. SUBSCRIPTIONS
+-- 18. SUBSCRIPTIONS
 -- ==========================================================
 CREATE TABLE subscriptions (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES subscription_plans(id) ON DELETE CASCADE,
     plan_code VARCHAR(100) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'active',
-    billing_type VARCHAR(50) NOT NULL DEFAULT 'one_time',
+    status VARCHAR(50) NOT NULL DEFAULT 'active', -- 'active', 'past_due', 'canceled', 'expired'
+    billing_type VARCHAR(50) NOT NULL DEFAULT 'one_time', -- 'one_time', 'recurring'
     current_period_start TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     current_period_end TIMESTAMP NOT NULL,
     cancel_at_period_end BOOLEAN DEFAULT FALSE,
@@ -277,9 +361,32 @@ CREATE TABLE subscriptions (
 );
 
 CREATE UNIQUE INDEX idx_unique_active_user_subscription ON subscriptions (user_id) WHERE status = 'active';
+CREATE INDEX idx_subscriptions_user_status ON subscriptions (user_id, status);
 
 -- ==========================================================
--- 16. PAYMENT TRANSACTIONS
+-- 19. PAYMENT ORDERS (Pre-Order Checkout Persistence)
+-- ==========================================================
+CREATE TABLE payment_orders (
+    id UUID PRIMARY KEY,
+    order_id VARCHAR(255) NOT NULL UNIQUE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    plan_code VARCHAR(100) NOT NULL,
+    coupon_code VARCHAR(100),
+    amount NUMERIC(12,2) NOT NULL,
+    currency VARCHAR(10) DEFAULT 'INR',
+    provider VARCHAR(50) DEFAULT 'razorpay',
+    status VARCHAR(50) DEFAULT 'created', -- 'created', 'paid', 'failed', 'expired'
+    subscription_id VARCHAR(255),
+    payment_id VARCHAR(255),
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_payment_orders_user_status ON payment_orders (user_id, status);
+
+-- ==========================================================
+-- 20. PAYMENT TRANSACTIONS (Billing & Invoices)
 -- ==========================================================
 CREATE TABLE payment_transactions (
     id UUID PRIMARY KEY,
@@ -303,8 +410,10 @@ CREATE TABLE payment_transactions (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_payment_transactions_user_sort ON payment_transactions (user_id, created_at DESC);
+
 -- ==========================================================
--- 17. WEBHOOK EVENTS (Idempotency Audit Log)
+-- 21. WEBHOOK EVENTS (Atomic Deduplication Audit Log)
 -- ==========================================================
 CREATE TABLE webhook_events (
     id UUID PRIMARY KEY,
@@ -321,7 +430,7 @@ CREATE TABLE webhook_events (
 CREATE UNIQUE INDEX idx_webhook_events_provider_event ON webhook_events (provider, event_id);
 
 -- ==========================================================
--- 18. COUPONS
+-- 22. COUPONS (Promo Codes)
 -- ==========================================================
 CREATE TABLE coupons (
     id UUID PRIMARY KEY,
@@ -337,7 +446,7 @@ CREATE TABLE coupons (
 );
 
 -- ==========================================================
--- 19. CONVERSATIONS
+-- 23. CONVERSATIONS (Application-Gated Channels)
 -- ==========================================================
 CREATE TABLE conversations (
     id UUID PRIMARY KEY,
@@ -345,13 +454,17 @@ CREATE TABLE conversations (
     candidate_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     recruiter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX idx_conversations_tripartite ON conversations (job_id, candidate_id, recruiter_id);
+CREATE INDEX idx_conversations_candidate_inbox ON conversations (candidate_id, is_deleted, last_message_at DESC);
+CREATE INDEX idx_conversations_recruiter_inbox ON conversations (recruiter_id, is_deleted, last_message_at DESC);
+
 -- ==========================================================
--- 20. MESSAGES
+-- 24. MESSAGES (1:1 Chat)
 -- ==========================================================
 CREATE TABLE messages (
     id UUID PRIMARY KEY,
@@ -363,13 +476,17 @@ CREATE TABLE messages (
     is_read BOOLEAN DEFAULT FALSE,
     read_at TIMESTAMP,
     is_edited BOOLEAN DEFAULT FALSE,
-    deleted_at TIMESTAMP,
+    deleted_for JSONB DEFAULT '[]',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_messages_history ON messages (conversation_id, created_at DESC);
+CREATE INDEX idx_messages_unread ON messages (conversation_id, is_read, sender_id);
+
 -- ==========================================================
--- 21. NOTIFICATIONS
+-- 25. NOTIFICATIONS (In-App Alerts)
 -- ==========================================================
 CREATE TABLE notifications (
     id UUID PRIMARY KEY,
@@ -385,8 +502,11 @@ CREATE TABLE notifications (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_notifications_recipient ON notifications (recipient_id, is_read, created_at DESC);
+CREATE INDEX idx_notifications_feed ON notifications (recipient_id, created_at DESC);
+
 -- ==========================================================
--- 22. USER LOCATIONS
+-- 26. USER LOCATIONS (Live Coordinates)
 -- ==========================================================
 CREATE TABLE user_locations (
     id UUID PRIMARY KEY,
@@ -406,7 +526,7 @@ CREATE TABLE user_locations (
 );
 
 -- ==========================================================
--- 23. LOCATION SHARES
+-- 27. LOCATION SHARES (Candidate Privacy Permissions)
 -- ==========================================================
 CREATE TABLE location_shares (
     id UUID PRIMARY KEY,
@@ -419,8 +539,11 @@ CREATE TABLE location_shares (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX idx_unique_location_share ON location_shares (application_id, user_id);
+CREATE INDEX idx_location_shares_app ON location_shares (application_id, is_active);
+
 -- ==========================================================
--- 24. LOCATION ACCESS LOGS
+-- 28. LOCATION ACCESS LOGS (Audit Trail)
 -- ==========================================================
 CREATE TABLE location_access_logs (
     id UUID PRIMARY KEY,
@@ -433,8 +556,11 @@ CREATE TABLE location_access_logs (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_location_access_logs_accessor ON location_access_logs (accessor_id, created_at DESC);
+CREATE INDEX idx_location_access_logs_target ON location_access_logs (target_user_id, created_at DESC);
+
 -- ==========================================================
--- 25. PENDING EMAIL NOTIFICATIONS
+-- 29. PENDING EMAIL NOTIFICATIONS (Offline Chat Debouncer)
 -- ==========================================================
 CREATE TABLE pending_email_notifications (
     id UUID PRIMARY KEY,
@@ -446,3 +572,5 @@ CREATE TABLE pending_email_notifications (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_pending_emails_send_at ON pending_email_notifications (send_at);

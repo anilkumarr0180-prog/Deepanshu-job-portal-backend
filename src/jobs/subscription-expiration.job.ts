@@ -18,11 +18,11 @@ export const initSubscriptionExpirationJob = () => {
     try {
       const now = new Date();
 
-      // 1. Process Expired Subscriptions
+      // 1. Process Expired Subscriptions (Canceled recurring subs or ended one-time purchases)
       const expiredSubs = await Subscription.find({
         status: "active",
         currentPeriodEnd: { $lte: now },
-        cancelAtPeriodEnd: true,
+        $or: [{ cancelAtPeriodEnd: true }, { billingType: "one_time" }],
       }).populate("userId planId");
 
       for (const sub of expiredSubs) {
@@ -62,7 +62,7 @@ export const initSubscriptionExpirationJob = () => {
 
       const expiringSoonSubs = await Subscription.find({
         status: "active",
-        cancelAtPeriodEnd: true,
+        $or: [{ cancelAtPeriodEnd: true }, { billingType: "one_time" }],
         currentPeriodEnd: { $gte: threeDaysFromNow, $lt: fourDaysFromNow },
       }).populate("userId planId");
 
@@ -96,10 +96,11 @@ export const initSubscriptionExpirationJob = () => {
           }).catch((err) => console.error("Expiring soon email failed:", err));
         }
       }
-      // 3. Process Overdue Autopay Subscriptions (3-Day Grace Period Elapsed)
+      // 3. Process Overdue Autopay Subscriptions (3-Day Grace Period Elapsed for recurring subscriptions)
       const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
       const overdueAutopaySubs = await Subscription.find({
         status: "active",
+        billingType: "recurring",
         cancelAtPeriodEnd: false,
         currentPeriodEnd: { $lte: threeDaysAgo },
       }).populate("userId planId");

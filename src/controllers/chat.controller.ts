@@ -23,10 +23,10 @@ export const createOrGetConversationController = asyncHandler(
     const userId = req.user?.userId;
     const { jobId, targetUserId } = req.body;
 
-    if (!jobId) {
+    if (!jobId && !targetUserId) {
       res.status(HTTP_STATUS.BAD_REQUEST).json({
         success: false,
-        message: "Job ID is required to start a conversation.",
+        message: "Job ID or Target User ID is required to start a conversation.",
       });
       return;
     }

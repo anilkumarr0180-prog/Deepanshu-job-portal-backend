@@ -305,28 +305,38 @@ export const initSocketServer = (
 
     /*
     |--------------------------------------------------------------------------
-    | Typing Indicators
+    | Typing Indicators (Authorized Room Check)
     |--------------------------------------------------------------------------
     */
     socket.on("typing_start", (data: { conversationId: string; userName?: string }) => {
       const { conversationId, userName } = data;
-      if (conversationId) {
-        socket.to(`conversation_${conversationId}`).emit("user_typing", {
-          conversationId,
-          userId,
-          userName: userName || "User",
-        });
+      if (!conversationId) return;
+
+      const convRoom = `conversation_${conversationId}`;
+      if (!socket.rooms.has(convRoom)) {
+        return; // Reject unauthorized / unjoined socket typing broadcasts
       }
+
+      socket.to(convRoom).emit("user_typing", {
+        conversationId,
+        userId,
+        userName: userName || "User",
+      });
     });
 
     socket.on("typing_stop", (data: { conversationId: string }) => {
       const { conversationId } = data;
-      if (conversationId) {
-        socket.to(`conversation_${conversationId}`).emit("user_stop_typing", {
-          conversationId,
-          userId,
-        });
+      if (!conversationId) return;
+
+      const convRoom = `conversation_${conversationId}`;
+      if (!socket.rooms.has(convRoom)) {
+        return; // Reject unauthorized / unjoined socket typing broadcasts
       }
+
+      socket.to(convRoom).emit("user_stop_typing", {
+        conversationId,
+        userId,
+      });
     });
 
     /*

@@ -1,8 +1,11 @@
 import mongoose, { Types } from "mongoose";
 import Post from "../models/post.model";
 import PostReaction from "../models/post-reaction.model";
+import User from "../models/user.model";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
+import { createNotification } from "./notification.service";
+import { NOTIFICATION_TYPES } from "../constants/notification-type";
 
 /*
 |--------------------------------------------------------------------------
@@ -10,6 +13,7 @@ import { HTTP_STATUS } from "../constants/http-status";
 |--------------------------------------------------------------------------
 |
 | Creates the user's like and increments likesCount atomically.
+| Triggers real-time notification to the post author.
 |
 */
 export const createPostReaction = async (
@@ -31,6 +35,7 @@ export const createPostReaction = async (
   }
 
   const session = await mongoose.startSession();
+  let postAuthorId: string | null = null;
 
   try {
     session.startTransaction();
@@ -52,6 +57,8 @@ export const createPostReaction = async (
         HTTP_STATUS.NOT_FOUND
       );
     }
+
+    postAuthorId = post.authorId.toString();
 
     /*
     |--------------------------------------------------------------------------
@@ -95,6 +102,32 @@ export const createPostReaction = async (
     );
 
     await session.commitTransaction();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dispatch Notification (Resilient & Non-blocking)
+    |--------------------------------------------------------------------------
+    */
+    if (postAuthorId && postAuthorId !== userId) {
+      try {
+        const actor = await User.findById(userId).select("name").lean();
+        const actorName = actor?.name || "A community member";
+
+        await createNotification({
+          recipientId: postAuthorId,
+          senderId: userId,
+          type: NOTIFICATION_TYPES.POST_LIKED,
+          title: "New Like on Your Post",
+          body: `${actorName} liked your post.`,
+          link: `/posts#post-${postId}`,
+          metadata: {
+            postId,
+          },
+        });
+      } catch (err) {
+        console.error("Failed to send notification on post like:", err);
+      }
+    }
 
     return reaction;
   } catch (error) {

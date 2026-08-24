@@ -1,15 +1,19 @@
 import mongoose, { Types } from "mongoose";
 import Post from "../models/post.model";
 import PostComment from "../models/post-comment.model";
+import User from "../models/user.model";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
 import {
   getPaginationOptions,
   buildPaginatedResult,
 } from "../utils/pagination";
+import { createNotification } from "./notification.service";
+import { NOTIFICATION_TYPES } from "../constants/notification-type";
 
 interface CreateCommentInput {
   content: string;
+  parentCommentId?: string | null;
 }
 
 interface UpdateCommentInput {
@@ -20,14 +24,16 @@ interface CommentFilters {
   page?: string | number;
   limit?: string | number;
   sort?: "newest" | "oldest";
+  parentCommentId?: string | null;
 }
 
 /*
 |--------------------------------------------------------------------------
-| Create Comment
+| Create Comment or Reply
 |--------------------------------------------------------------------------
 |
-| Creates a comment and increments commentsCount atomically.
+| Creates a comment/reply and increments commentsCount atomically.
+| Enforces strict single-level reply depth and triggers notifications.
 |
 */
 export const createPostComment = async (
@@ -49,7 +55,21 @@ export const createPostComment = async (
     );
   }
 
+  const isReply = Boolean(commentData.parentCommentId);
+
+  if (isReply && !Types.ObjectId.isValid(commentData.parentCommentId!)) {
+    throw new AppError(
+      "Invalid parent comment ID.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
   const session = await mongoose.startSession();
+
+  let createdComment: any = null;
+  let postAuthorId: string | null = null;
+  let parentCommentAuthorId: string | null = null;
+  let parentCommentIdStr: string | null = null;
 
   try {
     session.startTransaction();
@@ -75,13 +95,53 @@ export const createPostComment = async (
       );
     }
 
+    postAuthorId = post.authorId.toString();
+
     /*
     |--------------------------------------------------------------------------
-    | Create Comment
+    | Verify Parent Comment (if this is a reply)
+    |--------------------------------------------------------------------------
+    */
+    if (isReply) {
+      const parentComment = await PostComment.findOne({
+        _id: commentData.parentCommentId,
+        postId: new Types.ObjectId(postId),
+      }).session(session);
+
+      if (!parentComment) {
+        throw new AppError(
+          "Parent comment not found on this post.",
+          HTTP_STATUS.NOT_FOUND
+        );
+      }
+
+      if (parentComment.isDeleted) {
+        throw new AppError(
+          "Cannot reply to a deleted comment.",
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+
+      // Strict Depth Enforcement: Only single-level replies permitted
+      if (parentComment.parentCommentId) {
+        throw new AppError(
+          "Cannot reply to a reply. Only single-level replies are permitted.",
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+
+      parentCommentAuthorId = parentComment.authorId.toString();
+      parentCommentIdStr = parentComment._id.toString();
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Comment / Reply
     |--------------------------------------------------------------------------
     */
     const comment = new PostComment({
       postId: new Types.ObjectId(postId),
+      parentCommentId: isReply ? new Types.ObjectId(commentData.parentCommentId!) : null,
       authorId: new Types.ObjectId(userId),
       content: commentData.content,
       isDeleted: false,
@@ -91,7 +151,7 @@ export const createPostComment = async (
 
     /*
     |--------------------------------------------------------------------------
-    | Increment Comment Counter
+    | Increment Post Comment Counter
     |--------------------------------------------------------------------------
     */
     await Post.updateOne(
@@ -101,22 +161,75 @@ export const createPostComment = async (
     );
 
     await session.commitTransaction();
-
-    return comment;
+    createdComment = comment;
   } catch (error) {
     await session.abortTransaction();
     throw error;
   } finally {
     await session.endSession();
   }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Dispatch Notification (Asynchronous / Resilient)
+  |--------------------------------------------------------------------------
+  |
+  | Notification failure must never block or rollback successful comment creation.
+  |--------------------------------------------------------------------------
+  */
+  try {
+    const actor = await User.findById(userId).select("name").lean();
+    const actorName = actor?.name || "A community member";
+
+    if (isReply && parentCommentAuthorId && parentCommentAuthorId !== userId) {
+      // Notify parent comment author
+      await createNotification({
+        recipientId: parentCommentAuthorId,
+        senderId: userId,
+        type: NOTIFICATION_TYPES.COMMENT_REPLIED,
+        title: "New Reply to Your Comment",
+        body: `${actorName} replied to your comment: "${commentData.content.slice(0, 100)}${commentData.content.length > 100 ? "..." : ""}"`,
+        link: `/posts#post-${postId}`,
+        metadata: {
+          postId,
+          commentId: createdComment._id.toString(),
+          parentCommentId: parentCommentIdStr,
+        },
+      });
+    } else if (!isReply && postAuthorId && postAuthorId !== userId) {
+      // Notify post author
+      await createNotification({
+        recipientId: postAuthorId,
+        senderId: userId,
+        type: NOTIFICATION_TYPES.POST_COMMENTED,
+        title: "New Comment on Your Post",
+        body: `${actorName} commented on your post: "${commentData.content.slice(0, 100)}${commentData.content.length > 100 ? "..." : ""}"`,
+        link: `/posts#post-${postId}`,
+        metadata: {
+          postId,
+          commentId: createdComment._id.toString(),
+        },
+      });
+    }
+  } catch (err) {
+    console.error("Failed to send notification on post comment:", err);
+  }
+
+  // Populate author information for client response
+  const populatedComment = await PostComment.findById(createdComment._id)
+    .populate("authorId", "name email profilePicture role")
+    .lean();
+
+  return populatedComment || createdComment;
 };
 
 /*
 |--------------------------------------------------------------------------
-| Get Comments
+| Get Comments & Replies
 |--------------------------------------------------------------------------
 |
-| Returns non-deleted comments for a published post.
+| - Without parentCommentId: Returns paginated top-level comments with reply counts.
+| - With parentCommentId: Returns paginated replies under that comment.
 |--------------------------------------------------------------------------
 */
 export const getPostComments = async (
@@ -153,32 +266,107 @@ export const getPostComments = async (
     limit: filters.limit,
   });
 
+  const isQueryingReplies = Boolean(filters.parentCommentId);
+
+  if (isQueryingReplies) {
+    if (!Types.ObjectId.isValid(filters.parentCommentId!)) {
+      throw new AppError(
+        "Invalid parent comment ID.",
+        HTTP_STATUS.BAD_REQUEST
+      );
+    }
+
+    const sortOptions: Record<string, 1 | -1> =
+      filters.sort === "newest"
+        ? { createdAt: -1 }
+        : { createdAt: 1 }; // Default chronological for replies conversation flow
+
+    const query = {
+      postId: new Types.ObjectId(postId),
+      parentCommentId: new Types.ObjectId(filters.parentCommentId!),
+      isDeleted: false,
+    };
+
+    const [replies, totalItems] = await Promise.all([
+      PostComment.find(query)
+        .populate("authorId", "name email profilePicture role")
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      PostComment.countDocuments(query),
+    ]);
+
+    return buildPaginatedResult(replies, totalItems, page, limit);
+  }
+
+  // Top-Level Comments Query
   const sortOptions: Record<string, 1 | -1> =
     filters.sort === "oldest"
       ? { createdAt: 1 }
       : { createdAt: -1 };
 
-  const query = {
+  // Find top-level comments: include active comments, plus soft-deleted comments that have active replies
+  const parentIdsWithActiveReplies = await PostComment.distinct("parentCommentId", {
     postId: new Types.ObjectId(postId),
+    parentCommentId: { $ne: null },
     isDeleted: false,
+  });
+
+  const query: Record<string, unknown> = {
+    postId: new Types.ObjectId(postId),
+    parentCommentId: null,
+    $or: [
+      { isDeleted: false },
+      { _id: { $in: parentIdsWithActiveReplies } },
+    ],
   };
 
-  const [comments, totalItems] = await Promise.all([
+  const [rawComments, totalItems] = await Promise.all([
     PostComment.find(query)
-      .populate(
-        "authorId",
-        "name email profilePicture role"
-      )
+      .populate("authorId", "name email profilePicture role")
       .sort(sortOptions)
       .skip(skip)
       .limit(limit)
       .lean(),
-
     PostComment.countDocuments(query),
   ]);
 
+  // Compute reply counts dynamically via aggregation (Zero N+1)
+  const commentIds = rawComments.map((c) => c._id);
+  const replyCounts = commentIds.length > 0
+    ? await PostComment.aggregate([
+        {
+          $match: {
+            parentCommentId: { $in: commentIds },
+            isDeleted: false,
+          },
+        },
+        {
+          $group: {
+            _id: "$parentCommentId",
+            count: { $sum: 1 },
+          },
+        },
+      ])
+    : [];
+
+  const replyCountMap = new Map<string, number>();
+  replyCounts.forEach((rc) => {
+    replyCountMap.set(rc._id.toString(), rc.count);
+  });
+
+  const formattedComments = rawComments.map((doc) => {
+    const isDocDeleted = Boolean(doc.isDeleted);
+    return {
+      ...doc,
+      content: isDocDeleted ? "[Comment deleted]" : doc.content,
+      replyCount: replyCountMap.get(doc._id.toString()) || 0,
+    };
+  });
+
   return buildPaginatedResult(
-    comments,
+    formattedComments,
     totalItems,
     page,
     limit
@@ -246,7 +434,6 @@ export const updatePostComment = async (
   }
 
   comment.content = updateData.content;
-
   await comment.save();
 
   return comment;
@@ -327,7 +514,6 @@ export const deletePostComment = async (
     |--------------------------------------------------------------------------
     */
     comment.isDeleted = true;
-
     await comment.save({ session });
 
     /*

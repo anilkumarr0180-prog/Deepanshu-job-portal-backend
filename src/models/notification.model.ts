@@ -83,9 +83,10 @@ const notificationSchema = new Schema<INotification>(
   }
 );
 
-// Composite indexes for optimal query speed matching TL SQL indexes
+// Composite indexes for optimal query speed matching feed and unread filter patterns
 notificationSchema.index({ recipientId: 1, createdAt: -1 });
 notificationSchema.index({ recipientId: 1, isRead: 1 });
+notificationSchema.index({ recipientId: 1, isRead: 1, createdAt: -1 });
 
 const Notification = model<INotification>("Notification", notificationSchema);
 

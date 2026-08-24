@@ -96,7 +96,7 @@ const messageSchema = new Schema<IMessage>(
   }
 );
 
-messageSchema.index({ conversationId: 1, isDeleted: 1, createdAt: -1 });
+messageSchema.index({ conversationId: 1, createdAt: -1 });
 messageSchema.index({ conversationId: 1, isRead: 1, senderId: 1 });
 
 const Message = model<IMessage>("Message", messageSchema);

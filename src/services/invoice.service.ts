@@ -2,12 +2,23 @@ import PaymentTransaction, { IPaymentTransaction } from "../models/payment-trans
 import User from "../models/user.model";
 import SubscriptionPlan from "../models/subscription-plan.model";
 
-export async function generateInvoiceDetails(transactionId: string) {
+export async function generateInvoiceDetails(
+  transactionId: string,
+  requestingUserId?: string,
+  requestingUserRole?: string
+) {
   const transaction = await PaymentTransaction.findById(transactionId).populate("userId planId");
   if (!transaction) throw new Error("Transaction record not found");
 
   const user = transaction.userId as any;
   const plan = transaction.planId as any;
+
+  if (requestingUserId) {
+    const ownerId = user?._id ? user._id.toString() : transaction.userId?.toString();
+    if (ownerId && ownerId !== requestingUserId.toString() && requestingUserRole !== "admin") {
+      throw new Error("Forbidden: You do not have permission to view or download this invoice.");
+    }
+  }
 
   const invoiceNumber = `INV-${new Date().getFullYear()}-${transaction._id.toString().substring(18).toUpperCase()}`;
 
