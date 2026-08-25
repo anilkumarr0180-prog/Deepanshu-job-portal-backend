@@ -47,6 +47,9 @@ companyRecruiterSchema.index(
   { unique: true }
 );
 
+// Fast recruiter profile lookup for authorization
+companyRecruiterSchema.index({ recruiterProfileId: 1, isDeleted: 1 });
+
 // Enforce at most ONE active primary recruiter per company
 companyRecruiterSchema.index(
   { companyId: 1 },

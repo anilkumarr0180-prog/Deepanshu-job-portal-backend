@@ -6,6 +6,7 @@ import crypto from "crypto";
 import SubscriptionPlan, { ISubscriptionPlan } from "../models/subscription-plan.model";
 import Subscription, { ISubscription } from "../models/subscription.model";
 import PaymentTransaction from "../models/payment-transaction.model";
+import PaymentOrder from "../models/payment-order.model";
 import WebhookEvent from "../models/webhook-event.model";
 import User from "../models/user.model";
 import Job from "../models/job.model";
@@ -17,6 +18,7 @@ import {
   createRazorpayOrder,
   createRazorpaySubscription,
   createRazorpayPlan,
+  fetchRazorpayOrder,
   verifyPaymentSignature,
   verifyWebhookSignature,
   cancelRazorpaySubscription,
@@ -335,8 +337,19 @@ export async function consumeCouponCode(code: string, session?: mongoose.ClientS
       code: normalizedCode,
       isActive: true,
       $and: [
-        { $or: [{ expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }] },
-        { $or: [{ maxUses: -1 }, { $expr: { $lt: ["$timesUsed", "$maxUses"] } }] },
+        {
+          $or: [
+            { expiresAt: { $exists: false } },
+            { expiresAt: null },
+            { expiresAt: { $gt: new Date() } },
+          ],
+        },
+        {
+          $or: [
+            { maxUses: -1 },
+            { $expr: { $lt: ["$timesUsed", "$maxUses"] } },
+          ],
+        },
       ],
     },
     { $inc: { timesUsed: 1 } },
@@ -416,25 +429,7 @@ export async function getUserSubscriptionDetails(userId: string) {
     .sort({ createdAt: -1 })
     .populate("planId");
 
-  // 2. Auto-Recovery: If active plan is missing or free, check for recent active paid transaction
-  if (!subscription || subscription.planCode.includes("free")) {
-    const latestPaidTxn = await PaymentTransaction.findOne({
-      userId,
-      status: "succeeded",
-      amount: { $gt: 0 },
-    }).sort({ createdAt: -1 });
-
-    if (latestPaidTxn && latestPaidTxn.subscriptionId) {
-      const paidSub = await Subscription.findById(latestPaidTxn.subscriptionId).populate("planId");
-      if (paidSub && new Date(paidSub.currentPeriodEnd) > new Date()) {
-        paidSub.status = "active";
-        await paidSub.save();
-        subscription = paidSub;
-      }
-    }
-  }
-
-  // Default Fallback: Assign free tier if no subscription exists
+  // Default Fallback: Assign free tier if no active subscription exists
   if (!subscription) {
     const defaultCode = user.role === "recruiter" ? "recruiter_free" : "candidate_free";
     let freePlan = await SubscriptionPlan.findOne({ code: defaultCode });
@@ -547,6 +542,27 @@ export async function processCheckoutSession(
       (Boolean(providerDetails?.subscriptionId?.startsWith("sub_")) || providerDetails?.provider === "polar"))
   );
 
+  // 1. Fast Idempotency Pre-Check outside transaction
+  const existingTxnBefore = await PaymentTransaction.findOne({
+    $or: [
+      { transactionId },
+      ...(providerDetails?.paymentId ? [{ providerPaymentId: providerDetails.paymentId }, { transactionId: providerDetails.paymentId }] : []),
+      ...(providerDetails?.orderId ? [{ providerOrderId: providerDetails.orderId }] : []),
+    ],
+  }).sort({ createdAt: -1 });
+
+  if (existingTxnBefore) {
+    let existingSub = await Subscription.findById(existingTxnBefore.subscriptionId).populate("planId");
+    if (existingSub && existingSub.status !== "active") {
+      existingSub.status = "active";
+      await existingSub.save().catch(() => {});
+    }
+    return {
+      subscription: existingSub,
+      transaction: existingTxnBefore,
+    };
+  }
+
   let newSubscription: ISubscription | null = null;
   let transaction: any = null;
   const isPolar = providerType === "polar" || paymentMethod === "polar";
@@ -560,8 +576,19 @@ export async function processCheckoutSession(
   try {
     session.startTransaction();
 
-    // 1. Idempotency Check within Transaction Scope
-    const existingTxn = await PaymentTransaction.findOne({ transactionId }, null, { session });
+    // 2. Idempotency Check within Transaction Scope
+    const existingTxn = await PaymentTransaction.findOne(
+      {
+        $or: [
+          { transactionId },
+          ...(providerDetails?.paymentId ? [{ providerPaymentId: providerDetails.paymentId }, { transactionId: providerDetails.paymentId }] : []),
+          ...(providerDetails?.orderId ? [{ providerOrderId: providerDetails.orderId }] : []),
+        ],
+      },
+      null,
+      { session }
+    );
+
     if (existingTxn) {
       let existingSub = await Subscription.findById(existingTxn.subscriptionId, null, { session }).populate("planId");
       if (existingSub && existingSub.status !== "active") {
@@ -575,7 +602,7 @@ export async function processCheckoutSession(
       };
     }
 
-    // 2. Consume coupon atomically inside transaction session
+    // 3. Consume coupon atomically inside transaction session (only once)
     if (couponCode && couponCode.trim()) {
       appliedCoupon = await consumeCouponCode(couponCode.trim(), session);
       if (appliedCoupon.discountType === "percentage") {
@@ -585,14 +612,14 @@ export async function processCheckoutSession(
       }
     }
 
-    // 3. Atomically transition user's existing active subscription(s) to 'canceled'
+    // 4. Atomically transition user's existing active subscription(s) to 'canceled'
     await Subscription.updateMany(
       { userId, status: "active" },
       { $set: { status: "canceled", cancelAtPeriodEnd: false } },
       { session }
     );
 
-    // 4. Create new active subscription within transaction
+    // 5. Create new active subscription within transaction
     const subDocs = await Subscription.create(
       [
         {
@@ -615,7 +642,7 @@ export async function processCheckoutSession(
     );
     newSubscription = subDocs[0];
 
-    // 5. Create PaymentTransaction document within transaction
+    // 6. Create PaymentTransaction document within transaction
     const txnDocs = await PaymentTransaction.create(
       [
         {
@@ -649,6 +676,31 @@ export async function processCheckoutSession(
     await session.commitTransaction();
   } catch (err: any) {
     await session.abortTransaction().catch(() => {});
+
+    // Gracefully handle duplicate key collisions from concurrent activations
+    if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
+      const existingTxn = await PaymentTransaction.findOne({
+        $or: [
+          { transactionId },
+          ...(providerDetails?.paymentId ? [{ providerPaymentId: providerDetails.paymentId }, { transactionId: providerDetails.paymentId }] : []),
+          ...(providerDetails?.orderId ? [{ providerOrderId: providerDetails.orderId }] : []),
+          { userId },
+        ],
+      }).sort({ createdAt: -1 });
+
+      if (existingTxn) {
+        const existingSub = await Subscription.findById(existingTxn.subscriptionId).populate("planId");
+        if (existingSub) {
+          return { subscription: existingSub, transaction: existingTxn };
+        }
+      }
+
+      const activeSub = await Subscription.findOne({ userId, status: "active" }).populate("planId");
+      if (activeSub) {
+        const anyTxn = await PaymentTransaction.findOne({ subscriptionId: activeSub._id });
+        return { subscription: activeSub, transaction: anyTxn };
+      }
+    }
     throw err;
   } finally {
     await session.endSession().catch(() => {});
@@ -707,50 +759,57 @@ export async function createRazorpayOrderService(userId: string, planCode: strin
   if (!targetPlan) throw new Error("Plan not found or inactive");
 
   let finalPrice = targetPlan.price;
+  let appliedCoupon: any = null;
   if (couponCode && couponCode.trim()) {
-    try {
-      const coupon = await validateCouponCode(couponCode.trim());
-      if (coupon.discountType === "percentage") {
-        finalPrice = Math.max(0, finalPrice * (1 - coupon.discountValue / 100));
-      } else {
-        finalPrice = Math.max(0, finalPrice - coupon.discountValue);
-      }
-    } catch (e) { }
+    appliedCoupon = await validateCouponCode(couponCode.trim());
+    if (appliedCoupon.discountType === "percentage") {
+      finalPrice = Math.max(0, finalPrice * (1 - appliedCoupon.discountValue / 100));
+    } else {
+      finalPrice = Math.max(0, finalPrice - appliedCoupon.discountValue);
+    }
+  }
+
+  if (finalPrice <= 0) {
+    throw new Error("This plan is 100% discounted. Please activate it directly via standard checkout.");
   }
 
   const { keyId, isConfigured } = getRazorpayCredentials();
-
   if (!isConfigured) {
     throw new Error("Razorpay API credentials (RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) are not configured in server environment variables.");
   }
 
   const amountInPaise = Math.max(100, Math.round(finalPrice * 100));
 
-  let orderData: any = null;
-  let rzpSubscription: any = null;
-
-  const razorpayPlanId = getRazorpayPlanId(targetPlan);
-  if (razorpayPlanId) {
-    try {
-      rzpSubscription = await createRazorpaySubscription({
-        planId: razorpayPlanId,
-        notes: { userId, planCode, couponCode: couponCode || "" },
-      });
-    } catch (e: any) {
-      console.warn("Razorpay Subscription API notice, falling back to Order:", e.message);
-    }
-  }
-
-  orderData = await createRazorpayOrder({
+  const orderData = await createRazorpayOrder({
     amountInRupees: finalPrice,
     currency: "INR",
     receipt: `rcpt_${Date.now()}`,
-    notes: { userId, planCode, couponCode: couponCode || "" },
+    notes: {
+      userId,
+      planCode,
+      couponCode: couponCode ? couponCode.trim() : "",
+      amount: amountInPaise,
+    },
+  });
+
+  // Persist server-side PaymentOrder record to bind orderId to userId and planCode (SEC-01 & SEC-04)
+  await PaymentOrder.create({
+    orderId: orderData.id,
+    userId,
+    planCode,
+    couponCode: couponCode?.trim() || undefined,
+    amount: amountInPaise,
+    currency: "INR",
+    provider: "razorpay",
+    status: "created",
+    metadata: {
+      receipt: orderData.receipt,
+      notes: orderData.notes,
+    },
   });
 
   return {
     orderId: orderData.id,
-    subscriptionId: rzpSubscription?.id,
     amount: amountInPaise,
     currency: "INR",
     keyId,
@@ -763,7 +822,7 @@ export async function verifyRazorpayPaymentService(
   orderId: string,
   paymentId: string,
   signature: string,
-  planCode: string,
+  planCode?: string,
   couponCode?: string,
   subscriptionId?: string
 ) {
@@ -772,6 +831,7 @@ export async function verifyRazorpayPaymentService(
     throw new Error("Either orderId or subscriptionId must be provided to verify payment signature.");
   }
 
+  // 1. Verify Razorpay cryptographic HMAC-SHA256 signature
   const isValid = verifyPaymentSignature({
     orderId: effectiveOrderId,
     paymentId,
@@ -783,11 +843,66 @@ export async function verifyRazorpayPaymentService(
     throw new Error("Invalid Razorpay payment signature");
   }
 
-  return await processCheckoutSession(userId, planCode, "razorpay", couponCode, {
+  // 2. Resolve trusted order parameters from database PaymentOrder (SEC-01 & SEC-04)
+  let paymentOrder = await PaymentOrder.findOne({ orderId: effectiveOrderId });
+
+  let trustedPlanCode: string | undefined;
+  let trustedCouponCode: string | undefined;
+
+  if (paymentOrder) {
+    // Assert order ownership: Order MUST belong to the requesting user
+    if (paymentOrder.userId.toString() !== userId.toString()) {
+      throw new Error("Unauthorized: This payment order does not belong to your account.");
+    }
+    trustedPlanCode = paymentOrder.planCode;
+    trustedCouponCode = paymentOrder.couponCode;
+  } else {
+    // Authoritative Gateway Fallback: Fetch order details directly from Razorpay API
+    try {
+      if (effectiveOrderId && effectiveOrderId.startsWith("order_")) {
+        const rzpOrder = await fetchRazorpayOrder(effectiveOrderId);
+        const orderNotes = rzpOrder.notes || {};
+        if (orderNotes.userId && orderNotes.userId.toString() !== userId.toString()) {
+          throw new Error("Unauthorized: Razorpay order does not belong to your account.");
+        }
+        if (orderNotes.planCode) {
+          trustedPlanCode = orderNotes.planCode;
+        }
+        if (orderNotes.couponCode) {
+          trustedCouponCode = orderNotes.couponCode;
+        }
+      }
+    } catch (e: any) {
+      if (e.message?.includes("Unauthorized")) throw e;
+      console.warn("Razorpay API order fetch notice:", e.message);
+    }
+  }
+
+  // If order was created without a PaymentOrder record (e.g. test harness), fallback safely
+  if (!trustedPlanCode) {
+    if (!planCode) {
+      throw new Error("Unable to resolve subscription plan for payment order verification.");
+    }
+    trustedPlanCode = planCode;
+    trustedCouponCode = couponCode;
+  }
+
+  // 3. Process checkout session idempotently using trusted values (client planCode ignored)
+  const result = await processCheckoutSession(userId, trustedPlanCode, "razorpay", trustedCouponCode, {
     orderId: effectiveOrderId,
     paymentId,
     subscriptionId,
+    provider: "razorpay",
   });
+
+  // 4. Update PaymentOrder status to 'paid'
+  if (paymentOrder) {
+    paymentOrder.status = "paid";
+    paymentOrder.paymentId = paymentId;
+    await paymentOrder.save().catch(() => {});
+  }
+
+  return result;
 }
 
 export async function createPolarCheckoutService(
@@ -1195,14 +1310,33 @@ export async function handlePolarWebhookEvent(rawBody: string | Buffer, signatur
   }
 }
 
-export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signature: string, eventData: any) {
+export async function handleRazorpayWebhookEvent(
+  rawBody: string | Buffer,
+  signature: string,
+  eventData: any,
+  headerEventId?: string
+) {
   const isValid = verifyWebhookSignature(rawBody, signature);
   if (!isValid) {
     throw new Error("Invalid Razorpay webhook signature");
   }
 
-  const eventId = eventData?.event_id || eventData?.id || `evt_${Date.now()}`;
+  const payload = eventData?.payload || {};
+  const entity = payload.payment?.entity || payload.order?.entity || payload.subscription?.entity;
+  const entityId = entity?.id || payload.payment?.entity?.id || payload.order?.entity?.id || payload.subscription?.entity?.id;
   const eventType = eventData?.event || "unknown";
+
+  // Deterministic deduplication key identity (COR-03):
+  // 1. X-Razorpay-Event-Id header
+  // 2. Payload event_id / id
+  // 3. Deterministic entity ID + eventType
+  // 4. SHA-256 hash of payload
+  const eventId =
+    headerEventId ||
+    eventData?.event_id ||
+    eventData?.id ||
+    (entityId ? `evt_rzp_${entityId}_${eventType}` : undefined) ||
+    crypto.createHash("sha256").update(typeof rawBody === "string" ? rawBody : JSON.stringify(eventData)).digest("hex");
 
   // 1. Atomic Claim of Webhook Event via DB Unique Index
   let webhookDoc: any;
@@ -1222,12 +1356,9 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
     throw err;
   }
 
-  const payload = eventData?.payload || {};
-
   try {
     if (eventType === "subscription.charged") {
       // Automated Autopay Recurring Renewal Cycle from Razorpay
-      const entity = payload.payment?.entity || payload.subscription?.entity;
       const subEntity = payload.subscription?.entity;
       const subId = subEntity?.id || entity?.subscription_id;
       const paymentId = entity?.id;
@@ -1256,17 +1387,36 @@ export async function handleRazorpayWebhookEvent(rawBody: string | Buffer, signa
       eventType === "order.paid" ||
       eventType === "subscription.activated"
     ) {
-      const entity = payload.payment?.entity || payload.order?.entity || payload.subscription?.entity;
       const notes = entity?.notes || payload.order?.entity?.notes || payload.payment?.entity?.notes || {};
-      const userId = notes.userId;
-      const planCode = notes.planCode;
+      const orderId = payload.order?.entity?.id || entity?.order_id;
+      let userId = notes.userId;
+      let planCode = notes.planCode;
+      let couponCode = notes.couponCode;
+
+      // Reconcile with server-side PaymentOrder if notes were not attached to the payment entity
+      if (orderId && (!userId || !planCode)) {
+        const orderDoc = await PaymentOrder.findOne({ orderId });
+        if (orderDoc) {
+          userId = userId || orderDoc.userId.toString();
+          planCode = planCode || orderDoc.planCode;
+          couponCode = couponCode || orderDoc.couponCode;
+        }
+      }
 
       if (userId && planCode) {
-        await processCheckoutSession(userId, planCode, "razorpay", notes.couponCode, {
-          orderId: payload.order?.entity?.id || entity.order_id,
-          paymentId: payload.payment?.entity?.id || (entity.id?.startsWith("pay_") ? entity.id : undefined),
-          subscriptionId: entity.subscription_id || (entity.id?.startsWith("sub_") ? entity.id : undefined),
+        await processCheckoutSession(userId, planCode, "razorpay", couponCode, {
+          orderId,
+          paymentId: payload.payment?.entity?.id || (entity?.id?.startsWith("pay_") ? entity.id : undefined),
+          subscriptionId: entity?.subscription_id || (entity?.id?.startsWith("sub_") ? entity.id : undefined),
+          provider: "razorpay",
         });
+
+        if (orderId) {
+          await PaymentOrder.updateOne(
+            { orderId },
+            { $set: { status: "paid", paymentId: payload.payment?.entity?.id } }
+          ).catch(() => {});
+        }
       }
     } else if (eventType === "subscription.cancelled" || eventType === "subscription.completed") {
       const subEntity = payload.subscription?.entity;

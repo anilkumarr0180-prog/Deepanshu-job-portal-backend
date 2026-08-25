@@ -155,6 +155,7 @@ applicationSchema.index(
   },
   {
     unique: true,
+    partialFilterExpression: { isDeleted: false },
   }
 );
 
@@ -162,6 +163,7 @@ applicationSchema.index({ applicantId: 1, isDeleted: 1, createdAt: -1 });
 applicationSchema.index({ applicantId: 1, status: 1 });
 applicationSchema.index({ candidateProfileId: 1, isDeleted: 1, createdAt: -1 });
 applicationSchema.index({ jobId: 1, status: 1, isDeleted: 1 });
+applicationSchema.index({ jobId: 1, isDeleted: 1, createdAt: -1 });
 
 const Application = model<IApplication>(
   "Application",

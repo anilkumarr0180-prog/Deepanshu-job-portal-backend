@@ -14,16 +14,23 @@ const router = Router();
 
 /*
 |--------------------------------------------------------------------------
-| Get Profile
+| Get Profile (Own or by User ID)
 |--------------------------------------------------------------------------
 |
 | GET /api/profile
+| GET /api/profile/:userId
 |
 |--------------------------------------------------------------------------
 */
 
 router.get(
   "/profile",
+  authMiddleware,
+  getProfile
+);
+
+router.get(
+  "/profile/:userId",
   authMiddleware,
   getProfile
 );

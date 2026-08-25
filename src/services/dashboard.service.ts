@@ -51,6 +51,7 @@ export const getRecruiterDashboard = async (
       jobId: {
         $in: recruiterJobIds,
       },
+      isDeleted: false,
     }),
 
     Job.find({
@@ -68,6 +69,7 @@ export const getRecruiterDashboard = async (
       jobId: {
         $in: recruiterJobIds,
       },
+      isDeleted: false,
     })
       .populate({
         path: "jobId",
@@ -141,7 +143,7 @@ export const getCandidateDashboard = async (
     recentApplications,
   ] = await Promise.all([
     Application.aggregate([
-      { $match: { applicantId: candidateObjectId } },
+      { $match: { applicantId: candidateObjectId, isDeleted: false } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]),
 
@@ -151,6 +153,7 @@ export const getCandidateDashboard = async (
 
     Application.find({
       applicantId: candidateId,
+      isDeleted: false,
     })
       .populate({
         path: "jobId",
@@ -176,11 +179,13 @@ export const getCandidateDashboard = async (
   }, {});
 
   const applied = statusMap[APPLICATION_STATUS.APPLIED] || 0;
+  const underReview = statusMap[APPLICATION_STATUS.UNDER_REVIEW] || 0;
   const shortlisted = statusMap[APPLICATION_STATUS.SHORTLISTED] || 0;
   const interview = statusMap[APPLICATION_STATUS.INTERVIEW] || 0;
   const hired = statusMap[APPLICATION_STATUS.HIRED] || 0;
   const rejected = statusMap[APPLICATION_STATUS.REJECTED] || 0;
-  const totalApplications = applied + shortlisted + interview + hired + rejected;
+  const totalApplications =
+    applied + underReview + shortlisted + interview + hired + rejected;
 
   const validRecentApplications = (recentApplications || []).filter(
     (app) => app && app.jobId !== null
@@ -189,6 +194,7 @@ export const getCandidateDashboard = async (
   return {
     totalApplications,
     applied,
+    underReview,
     shortlisted,
     interview,
     hired,

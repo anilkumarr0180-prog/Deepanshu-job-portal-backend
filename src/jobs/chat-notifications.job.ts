@@ -49,12 +49,12 @@ export const initChatNotificationsJob = () => {
               Job.findById(notification.jobId).lean()
             ]);
 
-            if (recipient && sender && job) {
+            if (recipient && sender) {
               await sendUnreadMessagesEmail({
                 recipientName: recipient.name,
                 recipientEmail: recipient.email,
                 senderName: sender.name,
-                jobTitle: job.title,
+                jobTitle: job?.title || "Community Networking",
                 unreadCount,
               });
             }

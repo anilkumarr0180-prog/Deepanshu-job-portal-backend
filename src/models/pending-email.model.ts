@@ -4,7 +4,7 @@ export interface IPendingEmailNotification extends Document {
   recipientId: Types.ObjectId;
   conversationId: Types.ObjectId;
   senderId: Types.ObjectId;
-  jobId: Types.ObjectId;
+  jobId?: Types.ObjectId;
   sendAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -31,7 +31,7 @@ const pendingEmailNotificationSchema = new Schema<IPendingEmailNotification>(
     jobId: {
       type: Schema.Types.ObjectId,
       ref: "Job",
-      required: true,
+      required: false,
     },
     sendAt: {
       type: Date,

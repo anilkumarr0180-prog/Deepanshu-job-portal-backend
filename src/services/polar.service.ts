@@ -365,20 +365,9 @@ export function verifyPolarWebhookSignature(rawBody: string | Buffer, signatureH
       }
     }
 
-    if (
-      process.env.NODE_ENV === "development" ||
-      !effectiveSecret
-    ) {
-      console.warn("[Polar Webhook] Dev Mode Warning: Signature verification mismatch. Allowing event processing for local testing.");
-      return true;
-    }
-
     return false;
   } catch (err: any) {
     console.error("[Polar Webhook Verification Error]:", err.message);
-    if (process.env.NODE_ENV === "development") {
-      return true;
-    }
     return false;
   }
 }

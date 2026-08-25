@@ -40,6 +40,7 @@ export const createPostCommentSchema = z.object({
         2000,
         "Comment cannot exceed 2000 characters."
       ),
+    parentCommentId: objectIdSchema.nullable().optional(),
   }),
 });
 
@@ -77,6 +78,8 @@ export const getPostCommentsSchema = z.object({
       sort: z
         .enum(["newest", "oldest"])
         .optional(),
+
+      parentCommentId: objectIdSchema.nullable().optional(),
     })
     .optional(),
 });

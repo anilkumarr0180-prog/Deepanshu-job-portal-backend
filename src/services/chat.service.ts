@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import Conversation, { IConversation } from "../models/conversation.model";
 import Message, { IMessage, MessageType, IMessageAttachment } from "../models/message.model";
 import Job from "../models/job.model";
+import User from "../models/user.model";
 import Application from "../models/application.model";
 import PendingEmailNotification from "../models/pending-email.model";
 import { isUserOnline } from "../config/socket";
@@ -16,15 +17,102 @@ export interface PaginationQuery {
 
 /*
 |--------------------------------------------------------------------------
-| Create Or Get Conversation (Application-Gated)
+| Create Or Get Conversation (Job Application or Direct Networking)
 |--------------------------------------------------------------------------
 */
 export const createOrGetConversation = async (
-  jobId: string,
+  jobId?: string,
   targetUserId?: string,
   currentUserId?: string
 ): Promise<IConversation> => {
-  if (!jobId || !Types.ObjectId.isValid(jobId)) {
+  if (!currentUserId || !Types.ObjectId.isValid(currentUserId)) {
+    throw new AppError("Invalid or missing user ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const currentUserObjId = new Types.ObjectId(currentUserId);
+
+  /*
+  |--------------------------------------------------------------------------
+  | 1. Direct Peer-to-Peer / Networking Conversation (No Job ID)
+  |--------------------------------------------------------------------------
+  */
+  if (!jobId) {
+    if (!targetUserId || !Types.ObjectId.isValid(targetUserId)) {
+      throw new AppError("Target user ID is required to start a direct conversation.", HTTP_STATUS.BAD_REQUEST);
+    }
+
+    if (currentUserId === targetUserId) {
+      throw new AppError("Cannot start conversation with yourself.", HTTP_STATUS.BAD_REQUEST);
+    }
+
+    const targetUserObjId = new Types.ObjectId(targetUserId);
+    const targetUser = await User.findById(targetUserObjId).lean();
+    if (!targetUser) {
+      throw new AppError("Target user not found.", HTTP_STATUS.NOT_FOUND);
+    }
+
+    // Find if a direct conversation already exists between these 2 users (order-agnostic)
+    let conversation = await Conversation.findOne({
+      jobId: null,
+      $or: [
+        { candidateId: currentUserObjId, recruiterId: targetUserObjId },
+        { candidateId: targetUserObjId, recruiterId: currentUserObjId },
+      ],
+    });
+
+    if (conversation) {
+      if (conversation.isDeleted) {
+        conversation.isDeleted = false;
+        conversation.lastMessageAt = new Date();
+        await conversation.save();
+      }
+    } else {
+      try {
+        conversation = await Conversation.create({
+          candidateId: currentUserObjId,
+          recruiterId: targetUserObjId,
+          lastMessageAt: new Date(),
+          isDeleted: false,
+        });
+      } catch (err: any) {
+        if (err.code === 11000) {
+          conversation = await Conversation.findOne({
+            jobId: null,
+            $or: [
+              { candidateId: currentUserObjId, recruiterId: targetUserObjId },
+              { candidateId: targetUserObjId, recruiterId: currentUserObjId },
+            ],
+          });
+          if (conversation && conversation.isDeleted) {
+            conversation.isDeleted = false;
+            await conversation.save();
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!conversation) {
+      throw new AppError("Failed to retrieve or create conversation.", HTTP_STATUS.INTERNAL_SERVER_ERROR);
+    }
+
+    const populated = await Conversation.findById(conversation._id)
+      .populate({ path: "jobId", select: "title company location status salaryMin salaryMax" })
+      .populate({ path: "candidateId", select: "name email role profilePicture" })
+      .populate({ path: "recruiterId", select: "name email role profilePicture" })
+      .populate({ path: "lastMessageId", select: "message messageType createdAt senderId isRead" })
+      .exec();
+
+    return populated as IConversation;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | 2. Job-Gated Conversation (Application-Gated)
+  |--------------------------------------------------------------------------
+  */
+  if (!Types.ObjectId.isValid(jobId)) {
     throw new AppError("Invalid Job ID.", HTTP_STATUS.BAD_REQUEST);
   }
 
@@ -34,7 +122,7 @@ export const createOrGetConversation = async (
     throw new AppError("Job not found.", HTTP_STATUS.NOT_FOUND);
   }
 
-  const recruiterIdStr = (job.recruiterId || job.postedBy)?.toString() || "";
+  const recruiterIdStr = job.recruiterId?.toString() || "";
   let candidateIdStr = "";
 
   if (currentUserId === recruiterIdStr) {
@@ -58,11 +146,6 @@ export const createOrGetConversation = async (
   const candidateObjId = new Types.ObjectId(candidateIdStr);
   const recruiterObjId = new Types.ObjectId(recruiterIdStr);
 
-  /*
-  |--------------------------------------------------------------------------
-  | Mandatory Application Check (Explicit ObjectId matching)
-  |--------------------------------------------------------------------------
-  */
   const application = await Application.findOne({
     jobId: jobObjId,
     applicantId: candidateObjId,
@@ -76,25 +159,46 @@ export const createOrGetConversation = async (
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Find or Create Conversation (Explicit ObjectId matching)
-  |--------------------------------------------------------------------------
-  */
   let conversation = await Conversation.findOne({
     jobId: jobObjId,
     candidateId: candidateObjId,
     recruiterId: recruiterObjId,
-    isDeleted: false,
   });
 
+  if (conversation) {
+    if (conversation.isDeleted) {
+      conversation.isDeleted = false;
+      conversation.lastMessageAt = new Date();
+      await conversation.save();
+    }
+  } else {
+    try {
+      conversation = await Conversation.create({
+        jobId: jobObjId,
+        candidateId: candidateObjId,
+        recruiterId: recruiterObjId,
+        lastMessageAt: new Date(),
+        isDeleted: false,
+      });
+    } catch (err: any) {
+      if (err.code === 11000) {
+        conversation = await Conversation.findOne({
+          jobId: jobObjId,
+          candidateId: candidateObjId,
+          recruiterId: recruiterObjId,
+        });
+        if (conversation && conversation.isDeleted) {
+          conversation.isDeleted = false;
+          await conversation.save();
+        }
+      } else {
+        throw err;
+      }
+    }
+  }
+
   if (!conversation) {
-    conversation = await Conversation.create({
-      jobId: jobObjId,
-      candidateId: candidateObjId,
-      recruiterId: recruiterObjId,
-      lastMessageAt: new Date(),
-    });
+    throw new AppError("Failed to retrieve or create conversation.", HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 
   const populated = await Conversation.findById(conversation._id)
@@ -109,7 +213,7 @@ export const createOrGetConversation = async (
 
 /*
 |--------------------------------------------------------------------------
-| Get User Conversations (Explicit ObjectId + String matching)
+| Get User Conversations (Explicit ObjectId matching + Unread Counts)
 |--------------------------------------------------------------------------
 */
 export const getUserConversations = async (
@@ -122,12 +226,11 @@ export const getUserConversations = async (
 
   const userObjId = new Types.ObjectId(userId);
 
+  // P2: Clean canonical ObjectId query
   const query = {
     $or: [
       { candidateId: userObjId },
       { recruiterId: userObjId },
-      { candidateId: userId },
-      { recruiterId: userId },
     ],
     isDeleted: false,
   };
@@ -147,22 +250,39 @@ export const getUserConversations = async (
     Conversation.countDocuments(query),
   ]);
 
-  // Compute unread count for each conversation
-  const conversationsWithUnread = await Promise.all(
-    conversations.map(async (conv) => {
-      const unreadCount = await Message.countDocuments({
-        conversationId: conv._id,
-        senderId: { $ne: userObjId },
-        isRead: false,
-        isDeleted: false,
-      });
+  // Compute unread count for each conversation in a single aggregated batch query (Zero N+1)
+  const convIds = conversations.map((conv) => conv._id);
+  const unreadCountsMap = new Map<string, number>();
 
-      return {
-        ...conv,
-        unreadCount,
-      };
-    })
-  );
+  if (convIds.length > 0) {
+    // P1: Exclude deletedFor messages from unread counts
+    const unreadAgg = await Message.aggregate([
+      {
+        $match: {
+          conversationId: { $in: convIds },
+          senderId: { $ne: userObjId },
+          deletedFor: { $ne: userObjId },
+          isRead: false,
+          isDeleted: false,
+        },
+      },
+      {
+        $group: {
+          _id: "$conversationId",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    for (const item of unreadAgg) {
+      unreadCountsMap.set(item._id.toString(), item.count);
+    }
+  }
+
+  const conversationsWithUnread = conversations.map((conv) => ({
+    ...conv,
+    unreadCount: unreadCountsMap.get(conv._id.toString()) || 0,
+  }));
 
   return buildPaginatedResult(conversationsWithUnread, totalItems, page, limit);
 };
@@ -320,17 +440,35 @@ export const markConversationMessagesAsRead = async (
   userId: string
 ): Promise<{ updatedCount: number }> => {
   if (!conversationId || !Types.ObjectId.isValid(conversationId)) {
-    return { updatedCount: 0 };
+    throw new AppError("Invalid Conversation ID.", HTTP_STATUS.BAD_REQUEST);
+  }
+  if (!userId || !Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid User ID.", HTTP_STATUS.BAD_REQUEST);
   }
 
   const convObjId = new Types.ObjectId(conversationId);
-  const userObjId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId;
+  const userObjId = new Types.ObjectId(userId);
+
+  // P1: Validate conversation existence, soft-delete state, and participant authorization
+  const conversation = await Conversation.findById(convObjId).lean();
+  if (!conversation || conversation.isDeleted) {
+    throw new AppError("Conversation not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  const isCandidate = conversation.candidateId.toString() === userId;
+  const isRecruiter = conversation.recruiterId.toString() === userId;
+
+  if (!isCandidate && !isRecruiter) {
+    throw new AppError("You are not authorized to mark messages in this conversation as read.", HTTP_STATUS.FORBIDDEN);
+  }
 
   const result = await Message.updateMany(
     {
       conversationId: convObjId,
       senderId: { $ne: userObjId },
+      deletedFor: { $ne: userObjId },
       isRead: false,
+      isDeleted: false,
     },
     {
       $set: { isRead: true, readAt: new Date() },
@@ -475,12 +613,11 @@ export const getUnreadChatCount = async (userId: string): Promise<number> => {
 
   const userObjId = new Types.ObjectId(userId);
 
+  // P2: Clean canonical ObjectId query
   const conversations = await Conversation.find({
     $or: [
       { candidateId: userObjId },
       { recruiterId: userObjId },
-      { candidateId: userId },
-      { recruiterId: userId },
     ],
     isDeleted: false,
   })
@@ -491,9 +628,11 @@ export const getUnreadChatCount = async (userId: string): Promise<number> => {
 
   const conversationIds = conversations.map((c) => c._id);
 
+  // P1: Exclude deletedFor messages from unread counts
   const unreadCount = await Message.countDocuments({
     conversationId: { $in: conversationIds },
     senderId: { $ne: userObjId },
+    deletedFor: { $ne: userObjId },
     isRead: false,
     isDeleted: false,
   });

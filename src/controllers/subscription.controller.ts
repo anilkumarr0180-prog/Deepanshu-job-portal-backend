@@ -51,6 +51,8 @@ export async function getMySubscriptionController(req: AuthRequest, res: Respons
   }
 }
 
+import SubscriptionPlan from "../models/subscription-plan.model";
+
 export async function checkoutController(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.user?.userId || req.user?.id;
@@ -65,11 +67,27 @@ export async function checkoutController(req: AuthRequest, res: Response): Promi
       return;
     }
 
+    const targetPlan = await SubscriptionPlan.findOne({ code: planCode });
+    if (!targetPlan) {
+      res.status(400).json({ success: false, message: "Selected plan does not exist" });
+      return;
+    }
+
+    // Direct /checkout is only allowed for free/internal tier plans (SEC-02)
+    const isFree = targetPlan.price === 0 || targetPlan.code.includes("free") || targetPlan.provider === "internal";
+    if (!isFree) {
+      res.status(400).json({
+        success: false,
+        message: "Paid plans require payment verification via Razorpay or Polar.",
+      });
+      return;
+    }
+
     const result = await processCheckoutSession(userId, planCode, paymentMethod, couponCode);
 
     res.status(200).json({
       success: true,
-      message: "Subscription payment processed successfully!",
+      message: "Subscription activated successfully!",
       data: result,
     });
   } catch (error: any) {
@@ -191,14 +209,25 @@ export async function boostJobController(req: AuthRequest, res: Response): Promi
 
 export async function downloadInvoiceController(req: AuthRequest, res: Response): Promise<void> {
   try {
+    const userId = req.user?.userId || req.user?.id;
+    const userRole = req.user?.role;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "Unauthorized" });
+      return;
+    }
+
     const id = req.params.id as string;
-    const invoiceDetails = await generateInvoiceDetails(id);
+    const invoiceDetails = await generateInvoiceDetails(id, userId, userRole);
     const html = generateInvoiceHTML(invoiceDetails);
 
     res.setHeader("Content-Type", "text/html");
     res.status(200).send(html);
   } catch (error: any) {
-    res.status(400).json({ success: false, message: error.message || "Invoice download error" });
+    const statusCode =
+      error.message?.includes("Forbidden") || error.message?.includes("permission")
+        ? 403
+        : 400;
+    res.status(statusCode).json({ success: false, message: error.message || "Invoice download error" });
   }
 }
 
@@ -270,10 +299,11 @@ export async function getTransactionsController(req: AuthRequest, res: Response)
 export async function webhookController(req: Request, res: Response): Promise<void> {
   try {
     const signature = (req.headers["x-razorpay-signature"] as string) || "";
+    const headerEventId = (req.headers["x-razorpay-event-id"] as string) || "";
     const rawBody = (req as any).rawBody || JSON.stringify(req.body);
     const eventData = req.body;
 
-    const result = await handleRazorpayWebhookEvent(rawBody, signature, eventData);
+    const result = await handleRazorpayWebhookEvent(rawBody, signature, eventData, headerEventId);
     res.status(200).json(result);
   } catch (error: any) {
     console.error("Razorpay Webhook processing error:", error.message);

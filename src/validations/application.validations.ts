@@ -11,16 +11,47 @@ export const applyJobSchema = z.object({
   }),
 
   body: z.object({
-    coverLetter: z.string().trim().optional(),
-    applicantName: z.string().trim().optional(),
-    applicantPhone: z.string().trim().optional(),
-    applicantDesignation: z.string().trim().optional(),
-    experienceYears: z.number().optional(),
-    relevantSkills: z.array(z.string().trim()).optional(),
-    noticePeriod: z.string().trim().optional(),
+    coverLetter: z
+      .string()
+      .trim()
+      .max(5000, "Cover letter cannot exceed 5000 characters.")
+      .optional(),
+    applicantName: z
+      .string()
+      .trim()
+      .max(100, "Applicant name cannot exceed 100 characters.")
+      .optional(),
+    applicantPhone: z
+      .string()
+      .trim()
+      .max(25, "Applicant phone cannot exceed 25 characters.")
+      .optional(),
+    applicantDesignation: z
+      .string()
+      .trim()
+      .max(100, "Applicant designation cannot exceed 100 characters.")
+      .optional(),
+    experienceYears: z
+      .number()
+      .min(0, "Experience years cannot be negative.")
+      .max(70, "Invalid experience years.")
+      .optional(),
+    relevantSkills: z
+      .array(z.string().trim().max(50, "Skill name cannot exceed 50 characters."))
+      .max(50, "Cannot specify more than 50 skills.")
+      .optional(),
+    noticePeriod: z
+      .string()
+      .trim()
+      .max(50, "Notice period cannot exceed 50 characters.")
+      .optional(),
     resumeUrl: z.string().trim().optional(),
     resumePublicId: z.string().trim().optional(),
-    resumeFileName: z.string().trim().optional(),
+    resumeFileName: z
+      .string()
+      .trim()
+      .max(255, "Resume file name cannot exceed 255 characters.")
+      .optional(),
   }),
 });
 

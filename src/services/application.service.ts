@@ -2,6 +2,7 @@ import Application from "../models/application.model";
 import Job from "../models/job.model";
 import User from "../models/user.model";
 import CandidateProfile from "../models/candidate-profile.model";
+import { getAuthorizedCompanyForRecruiter } from "./company.service";
 import {
   sendJobApplicationApplicantEmail,
   sendJobApplicationRecruiterEmail,
@@ -18,7 +19,6 @@ import {
 import { JOB_STATUS } from "../constants/job-status";
 import { createNotification } from "./notification.service";
 import { NOTIFICATION_TYPES } from "../constants/notification-type";
-
 
 import {
   getPaginationOptions,
@@ -49,17 +49,6 @@ interface ApplicationFilters {
 |--------------------------------------------------------------------------
 | Apply For Job
 |--------------------------------------------------------------------------
-|
-| Business Rules:
-|
-| - Job must exist
-| - Job must be ACTIVE
-| - Candidate must exist
-| - Candidate must upload resume before applying
-| - Candidate cannot apply twice
-| - Application stores the resume from candidate profile
-|
-|--------------------------------------------------------------------------
 */
 
 export const applyForJob = async (
@@ -68,10 +57,10 @@ export const applyForJob = async (
   applicationData: ApplyJobInput
 ) => {
   /* -------------------------------------------------------------------------- */
-  /* Check Job Exists                                                            */
+  /* Check Job Exists & Is Not Deleted                                         */
   /* -------------------------------------------------------------------------- */
 
-  const job = await Job.findById(jobId);
+  const job = await Job.findOne({ _id: jobId, isDeleted: false });
 
   if (!job) {
     throw new AppError(
@@ -81,7 +70,7 @@ export const applyForJob = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Job Status Check                                                            */
+  /* Job Status & Expiry Check                                                  */
   /* -------------------------------------------------------------------------- */
 
   if (job.status !== JOB_STATUS.ACTIVE) {
@@ -91,8 +80,26 @@ export const applyForJob = async (
     );
   }
 
+  if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
+    throw new AppError(
+      "This job listing has expired.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
   /* -------------------------------------------------------------------------- */
-  /* Check Company Verification                                                  */
+  /* Check Recruiter Account Is Active & Not Blocked                           */
+  /* -------------------------------------------------------------------------- */
+
+  const recruiterUser = await User.findById(job.recruiterId).select("name email isBlocked status").lean();
+
+  if (!recruiterUser || (recruiterUser as any).isBlocked) {
+    throw new AppError(
+      "This job posting is no longer available.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
   /* -------------------------------------------------------------------------- */
   /* Check Company Verification                                                  */
   /* -------------------------------------------------------------------------- */
@@ -100,10 +107,10 @@ export const applyForJob = async (
   const Company = (await import("../models/company.model")).default;
   let company = null;
   if (job.companyId) {
-    company = await Company.findById(job.companyId);
+    company = await Company.findOne({ _id: job.companyId, isDeleted: false });
   }
   if (!company && job.recruiterId) {
-    company = await Company.findOne({ recruiterId: job.recruiterId });
+    company = await Company.findOne({ recruiterId: job.recruiterId, isDeleted: false });
   }
 
   if (company && company.isVerified === false) {
@@ -114,7 +121,7 @@ export const applyForJob = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Prevent Self Application                                                    */
+  /* Prevent Self Application & Company Team Application                         */
   /* -------------------------------------------------------------------------- */
 
   if (job.recruiterId.toString() === applicantId) {
@@ -124,10 +131,28 @@ export const applyForJob = async (
     );
   }
 
+  if (job.companyId) {
+    const RecruiterProfile = (await import("../models/recruiter-profile.model")).default;
+    const CompanyRecruiter = (await import("../models/company-recruiter.model")).default;
+    const applicantRecruiterProfile = await RecruiterProfile.findOne({ userId: applicantId });
+    if (applicantRecruiterProfile) {
+      const isCompanyMember = await CompanyRecruiter.findOne({
+        companyId: job.companyId,
+        recruiterProfileId: applicantRecruiterProfile._id,
+        isDeleted: false,
+      });
+      if (isCompanyMember) {
+        throw new AppError(
+          "Company team members cannot apply to their own company's jobs.",
+          HTTP_STATUS.FORBIDDEN
+        );
+      }
+    }
+  }
 
-/* -------------------------------------------------------------------------- */
-/* Check Candidate Exists & Is Not Blocked                                    */
-/* -------------------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* Check Candidate Exists & Is Not Blocked                                    */
+  /* -------------------------------------------------------------------------- */
 
   const candidate = await User.findById(applicantId).select(
     "name email resumeUrl isBlocked"
@@ -180,42 +205,69 @@ export const applyForJob = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Duplicate Application Check                                                 */
+  /* Check / Revive Existing Application or Insert with Race Protection          */
   /* -------------------------------------------------------------------------- */
 
-  const existingApplication = await Application.findOne({
+  let application = await Application.findOne({
     jobId,
     applicantId,
   });
 
-  if (existingApplication) {
-    throw new AppError(
-      "You have already applied for this job.",
-      HTTP_STATUS.CONFLICT
-    );
+  if (application) {
+    if (!application.isDeleted) {
+      throw new AppError(
+        "You have already applied for this job.",
+        HTTP_STATUS.CONFLICT
+      );
+    }
+
+    // Candidate previously withdrew; revive application with fresh details
+    application.isDeleted = false;
+    application.candidateProfileId = candidateProfile._id;
+    application.applicantName = applicationData.applicantName || candidate.name;
+    application.applicantEmail = candidate.email;
+    application.applicantPhone = applicationData.applicantPhone || candidateProfile?.phone || (candidate as any).phone || "";
+    application.applicantDesignation = applicationData.applicantDesignation || candidateProfile?.headline || "";
+    application.experienceYears = typeof applicationData.experienceYears === "number" ? applicationData.experienceYears : 0;
+    application.relevantSkills = applicationData.relevantSkills || candidateProfile?.skills || [];
+    application.noticePeriod = applicationData.noticePeriod || "";
+    application.resume = activeResumeUrl;
+    application.resumePublicId = activeResumePublicId;
+    application.resumeFileName = activeResumeFileName;
+    application.coverLetter = applicationData.coverLetter;
+    application.status = APPLICATION_STATUS.APPLIED;
+    application.interviewDetails = undefined;
+    await application.save();
+  } else {
+    try {
+      application = await Application.create({
+        jobId,
+        applicantId,
+        candidateProfileId: candidateProfile._id,
+        applicantName: applicationData.applicantName || candidate.name,
+        applicantEmail: candidate.email,
+        applicantPhone: applicationData.applicantPhone || candidateProfile?.phone || (candidate as any).phone || "",
+        applicantDesignation: applicationData.applicantDesignation || candidateProfile?.headline || "",
+        experienceYears: typeof applicationData.experienceYears === "number" ? applicationData.experienceYears : 0,
+        relevantSkills: applicationData.relevantSkills || candidateProfile?.skills || [],
+        noticePeriod: applicationData.noticePeriod || "",
+        resume: activeResumeUrl,
+        resumePublicId: activeResumePublicId,
+        resumeFileName: activeResumeFileName,
+        coverLetter: applicationData.coverLetter,
+        status: APPLICATION_STATUS.APPLIED,
+        isDeleted: false,
+      });
+    } catch (err: any) {
+      if (err.code === 11000 || err.name === "MongoServerError" || err.message?.includes("E11000")) {
+        throw new AppError(
+          "You have already applied for this job.",
+          HTTP_STATUS.CONFLICT
+        );
+      }
+      throw err;
+    }
   }
-
-  /* -------------------------------------------------------------------------- */
-  /* Create Application                                                          */
-  /* -------------------------------------------------------------------------- */
-
-  const application = await Application.create({
-    jobId,
-    applicantId,
-    candidateProfileId: candidateProfile._id,
-    applicantName: applicationData.applicantName || candidate.name,
-    applicantEmail: candidate.email,
-    applicantPhone: applicationData.applicantPhone || candidateProfile?.phone || (candidate as any).phone || "",
-    applicantDesignation: applicationData.applicantDesignation || candidateProfile?.headline || "",
-    experienceYears: typeof applicationData.experienceYears === "number" ? applicationData.experienceYears : 0,
-    relevantSkills: applicationData.relevantSkills || candidateProfile?.skills || [],
-    noticePeriod: applicationData.noticePeriod || "",
-    resume: activeResumeUrl,
-    resumePublicId: activeResumePublicId,
-    resumeFileName: activeResumeFileName,
-    coverLetter: applicationData.coverLetter,
-    status: APPLICATION_STATUS.APPLIED,
-  });
 
   await application.populate({
     path: "jobId",
@@ -264,11 +316,6 @@ export const applyForJob = async (
 
   try {
     const companyName = company?.name || job.company || "JobsBox Partner";
-    
-    // Fetch recruiter user details
-    const recruiterUser = await User.findById(job.recruiterId).select("name email").lean();
-
-    // Dispatch emails concurrently
     const emailPromises: Promise<any>[] = [];
 
     if (candidate.email) {
@@ -282,8 +329,6 @@ export const applyForJob = async (
           applicationId: application._id.toString(),
         })
       );
-    } else {
-      console.warn(`[SMTP WARN] Candidate (ID: ${applicantId}) does not have an email address attached in DB.`);
     }
 
     if (recruiterUser?.email) {
@@ -301,16 +346,14 @@ export const applyForJob = async (
           applicationId: application._id.toString(),
         })
       );
-    } else {
-      console.warn(`[SMTP WARN] Recruiter (ID: ${job.recruiterId}) does not have an email address attached in DB.`);
     }
 
-    await Promise.allSettled(emailPromises);
+    void Promise.allSettled(emailPromises).catch((err) => {
+      console.error("Failed to dispatch application emails via SMTP:", err);
+    });
   } catch (err) {
-    console.error("Failed to dispatch application emails via SMTP:", err);
+    console.error("Failed to prepare application emails:", err);
   }
-
-
 
   return application;
 };
@@ -327,6 +370,7 @@ export const getMyApplications = async (
 ) => {
   const query: Record<string, unknown> = {
     applicantId,
+    isDeleted: false,
   };
 
   if (filters.status) {
@@ -378,7 +422,7 @@ export const getMyApplications = async (
 
 /*
 |--------------------------------------------------------------------------
-| Get Applications For Job
+| Get Applications For Job (Recruiter & Authorized Company Teammates)
 |--------------------------------------------------------------------------
 */
 
@@ -387,13 +431,7 @@ export const getJobApplications = async (
   recruiterId: string,
   filters: ApplicationFilters = {}
 ) => {
-  /*
-  |--------------------------------------------------------------------------
-  | Check Job Exists
-  |--------------------------------------------------------------------------
-  */
-
-  const job = await Job.findById(jobId).lean();
+  const job = await Job.findOne({ _id: jobId, isDeleted: false }).lean();
 
   if (!job) {
     throw new AppError(
@@ -402,27 +440,22 @@ export const getJobApplications = async (
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Check Job Ownership
-  |--------------------------------------------------------------------------
-  */
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
+  const isDirectOwner = job.recruiterId.toString() === recruiterId;
+  const isCompanyTeammate = Boolean(
+    auth && job.companyId && auth.company._id.toString() === job.companyId.toString()
+  );
 
-  if (job.recruiterId.toString() !== recruiterId) {
+  if (!isDirectOwner && !isCompanyTeammate) {
     throw new AppError(
       "You are not authorized to view these applications.",
       HTTP_STATUS.FORBIDDEN
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Get Applications
-  |--------------------------------------------------------------------------
-  */
-
   const query: Record<string, unknown> = {
     jobId,
+    isDeleted: false,
   };
 
   if (filters.status) {
@@ -464,7 +497,7 @@ export const getJobApplications = async (
 
 /*
 |--------------------------------------------------------------------------
-| Get All Recruiter Applications (Across All Posted Jobs)
+| Get All Recruiter Applications (Across All Owned & Company Posted Jobs)
 |--------------------------------------------------------------------------
 */
 export const getRecruiterApplications = async (
@@ -472,13 +505,28 @@ export const getRecruiterApplications = async (
   filters: ApplicationFilters = {}
 ) => {
   const Job = (await import("../models/job.model")).default;
-  const recruiterJobs = await Job.find({ recruiterId }).select("_id title").lean();
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
+
+  let jobQuery: Record<string, unknown> = {
+    recruiterId,
+    isDeleted: false,
+  };
+
+  if (auth?.company?._id) {
+    jobQuery = {
+      $or: [{ recruiterId }, { companyId: auth.company._id }],
+      isDeleted: false,
+    };
+  }
+
+  const recruiterJobs = await Job.find(jobQuery).select("_id title").lean();
   const jobIds = recruiterJobs.map((j) => j._id);
   const jobTitleMap = new Map<string, string>();
   recruiterJobs.forEach((j) => jobTitleMap.set(j._id.toString(), j.title));
 
   const query: Record<string, unknown> = {
     jobId: { $in: jobIds },
+    isDeleted: false,
   };
 
   if (filters.status) {
@@ -530,14 +578,10 @@ export const updateApplicationStatus = async (
   status: string,
   interviewDetails?: any
 ) => {
-  /*
-  |--------------------------------------------------------------------------
-  | Find Application
-  |--------------------------------------------------------------------------
-  */
-
-  const application =
-    await Application.findById(applicationId);
+  const application = await Application.findOne({
+    _id: applicationId,
+    isDeleted: false,
+  });
 
   if (!application) {
     throw new AppError(
@@ -546,13 +590,7 @@ export const updateApplicationStatus = async (
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Check Job Ownership
-  |--------------------------------------------------------------------------
-  */
-
-  const job = await Job.findById(application.jobId);
+  const job = await Job.findOne({ _id: application.jobId, isDeleted: false });
 
   if (!job) {
     throw new AppError(
@@ -561,18 +599,22 @@ export const updateApplicationStatus = async (
     );
   }
 
-  if (job.recruiterId.toString() !== recruiterId) {
+  const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
+  const isDirectOwner = job.recruiterId.toString() === recruiterId;
+  const isCompanyTeammate = Boolean(
+    auth && job.companyId && auth.company._id.toString() === job.companyId.toString()
+  );
+
+  if (!isDirectOwner && !isCompanyTeammate) {
     throw new AppError(
       "You are not authorized to update this application.",
       HTTP_STATUS.FORBIDDEN
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Status Transition Checks & Normalization
-  |--------------------------------------------------------------------------
-  */
+  /* -------------------------------------------------------------------------- */
+  /* Status Transition Checks & Normalization                                   */
+  /* -------------------------------------------------------------------------- */
 
   const normalizedStatusMap: Record<string, string> = {
     applied: APPLICATION_STATUS.APPLIED,
@@ -589,24 +631,72 @@ export const updateApplicationStatus = async (
       ? normalizedStatusMap[status.toLowerCase()] || status
       : status;
 
+  if (application.status === targetStatus) {
+    if (targetStatus === APPLICATION_STATUS.INTERVIEW && interviewDetails) {
+      application.interviewDetails = interviewDetails;
+      await application.save();
+    }
+    return application;
+  }
+
   if (
     application.status === APPLICATION_STATUS.HIRED ||
     application.status === APPLICATION_STATUS.REJECTED
   ) {
-    if (application.status === targetStatus) {
-      return application;
-    }
     throw new AppError(
       "Cannot change status of a finalized application.",
       HTTP_STATUS.CONFLICT
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Update Status & Interview Details
-  |--------------------------------------------------------------------------
-  */
+  // Proper State-Machine Transition Matrix
+  const VALID_TRANSITIONS: Record<string, string[]> = {
+    [APPLICATION_STATUS.APPLIED]: [
+      APPLICATION_STATUS.UNDER_REVIEW,
+      APPLICATION_STATUS.SHORTLISTED,
+      APPLICATION_STATUS.REJECTED,
+    ],
+    [APPLICATION_STATUS.UNDER_REVIEW]: [
+      APPLICATION_STATUS.SHORTLISTED,
+      APPLICATION_STATUS.INTERVIEW,
+      APPLICATION_STATUS.REJECTED,
+    ],
+    [APPLICATION_STATUS.SHORTLISTED]: [
+      APPLICATION_STATUS.INTERVIEW,
+      APPLICATION_STATUS.REJECTED,
+    ],
+    [APPLICATION_STATUS.INTERVIEW]: [
+      APPLICATION_STATUS.HIRED,
+      APPLICATION_STATUS.REJECTED,
+    ],
+  };
+
+  const allowedNext = VALID_TRANSITIONS[application.status] || [];
+  if (!allowedNext.includes(targetStatus)) {
+    throw new AppError(
+      `Cannot transition application status from "${application.status}" to "${targetStatus}".`,
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  // Validate required interview details when transitioning to INTERVIEW
+  if (targetStatus === APPLICATION_STATUS.INTERVIEW) {
+    if (
+      !interviewDetails ||
+      typeof interviewDetails !== "object" ||
+      !interviewDetails.date?.trim() ||
+      !interviewDetails.time?.trim()
+    ) {
+      throw new AppError(
+        "Interview date and time are required when scheduling an interview.",
+        HTTP_STATUS.BAD_REQUEST
+      );
+    }
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Update Status & Interview Details                                          */
+  /* -------------------------------------------------------------------------- */
 
   application.status = targetStatus as ApplicationStatus;
   if (interviewDetails) {
@@ -685,12 +775,11 @@ export const updateApplicationStatus = async (
   }
 
   return application;
-
 };
 
 /*
 |--------------------------------------------------------------------------
-| Withdraw Application
+| Withdraw Application (Soft Delete)
 |--------------------------------------------------------------------------
 */
 
@@ -698,14 +787,10 @@ export const withdrawApplication = async (
   applicationId: string,
   applicantId: string
 ) => {
-  /*
-  |--------------------------------------------------------------------------
-  | Find Application
-  |--------------------------------------------------------------------------
-  */
-
-  const application =
-    await Application.findById(applicationId);
+  const application = await Application.findOne({
+    _id: applicationId,
+    isDeleted: false,
+  });
 
   if (!application) {
     throw new AppError(
@@ -714,27 +799,12 @@ export const withdrawApplication = async (
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Check Ownership
-  |--------------------------------------------------------------------------
-  */
-
-  if (
-    application.applicantId.toString() !==
-    applicantId
-  ) {
+  if (application.applicantId.toString() !== applicantId) {
     throw new AppError(
       "You are not authorized to withdraw this application.",
       HTTP_STATUS.FORBIDDEN
     );
   }
-
-  /*
-  |--------------------------------------------------------------------------
-  | Check Active Status
-  |--------------------------------------------------------------------------
-  */
 
   if (
     application.status === APPLICATION_STATUS.HIRED ||
@@ -746,13 +816,9 @@ export const withdrawApplication = async (
     );
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Delete Application
-  |--------------------------------------------------------------------------
-  */
-
-  await application.deleteOne();
+  // Soft Delete application preserving historical records
+  application.isDeleted = true;
+  await application.save();
 
   return;
-};
+};

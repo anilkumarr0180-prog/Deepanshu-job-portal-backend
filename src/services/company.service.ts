@@ -183,7 +183,7 @@ export const createCompany = async (
 
     recruiterId,
 
-    isVerified: true,
+    isVerified: false,
   });
 
   // Authoritative link: CompanyRecruiter

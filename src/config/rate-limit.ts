@@ -16,11 +16,14 @@ import rateLimit from "express-rate-limit";
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
-  standardHeaders: true,  // Return rate-limit info in RateLimit-* headers
-  legacyHeaders: false,   // Disable X-RateLimit-* legacy headers
-  message: {
-    success: false,
-    message: "Too many requests from this IP, please try again after 15 minutes.",
+  standardHeaders: true, // Return rate-limit info in RateLimit-* headers
+  legacyHeaders: false, // Disable X-RateLimit-* legacy headers
+  handler: (_req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Too many authentication attempts from this IP, please try again after 15 minutes.",
+      errors: [],
+    });
   },
   skip: () => process.env.NODE_ENV === "test", // Don't rate-limit during tests
 });
@@ -35,9 +38,12 @@ export const generalRateLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Too many requests from this IP, please try again after 15 minutes.",
+  handler: (_req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Too many requests from this IP, please try again after 15 minutes.",
+      errors: [],
+    });
   },
   skip: () => process.env.NODE_ENV === "test",
 });
