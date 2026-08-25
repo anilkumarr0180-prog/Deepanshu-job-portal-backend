@@ -330,3 +330,44 @@ export const getCurrentUser = async (userId: string) => {
 
   return safeUser;
 };
+
+export const changePassword = async (
+  userId: string,
+  input: { currentPassword?: string; newPassword?: string }
+) => {
+  const user = await User.findById(userId).select("+password");
+
+  if (!user) {
+    throw new AppError("User not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  if (user.authProvider === "google" && !user.password) {
+    throw new AppError(
+      "This account was authenticated with Google OAuth. Passwords cannot be changed here.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  if (!input.currentPassword || !input.newPassword) {
+    throw new AppError("Current password and new password are required.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const isPasswordValid = await comparePassword(
+    input.currentPassword,
+    user.password!
+  );
+
+  if (!isPasswordValid) {
+    throw new AppError("Incorrect current password.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  if (input.currentPassword === input.newPassword) {
+    throw new AppError("New password must be different from current password.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const hashedPassword = await hashPassword(input.newPassword);
+  user.password = hashedPassword;
+  await user.save();
+
+  return { message: "Password updated successfully." };
+};

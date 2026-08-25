@@ -4,12 +4,14 @@ import {
   login,
   googleAuth,
   getCurrentUser,
+  changePassword,
 } from "../controllers/auth.controller";
 import { validate } from "../middleware/validation.middleware";
 import {
   registerSchema,
   loginSchema,
   googleAuthSchema,
+  changePasswordSchema,
 } from "../validations/auth.validations";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authRateLimiter } from "../config/rate-limit";
@@ -41,6 +43,13 @@ router.get(
   "/me",
   authMiddleware,
   getCurrentUser
+);
+
+router.patch(
+  "/change-password",
+  authMiddleware,
+  validate(changePasswordSchema),
+  changePassword
 );
 
 export default router;

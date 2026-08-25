@@ -1,6 +1,7 @@
 import mongoose, { Types } from "mongoose";
 import Post from "../models/post.model";
 import PostReaction from "../models/post-reaction.model";
+import SavedPost from "../models/saved-post.model";
 import User from "../models/user.model";
 import Connection from "../models/connection.model";
 import cloudinaryService from "./cloudinary.service";
@@ -219,48 +220,224 @@ export const getPostById = async (postId: string, currentUserId?: string) => {
 
   let isLiked = false;
   let isReposted = false;
+  let isSaved = false;
 
   if (currentUserId && Types.ObjectId.isValid(currentUserId)) {
     const userObjId = new Types.ObjectId(currentUserId);
-    const [reaction, userRepost] = await Promise.all([
+    const [reaction, userRepost, savedRecord] = await Promise.all([
       PostReaction.findOne({ postId: post._id, userId: userObjId }).lean(),
       Post.findOne({ authorId: userObjId, originalPostId: post._id, isDeleted: false }).lean(),
+      SavedPost.findOne({ postId: post._id, userId: userObjId }).lean(),
     ]);
     isLiked = !!reaction;
     isReposted = !!userRepost;
+    isSaved = !!savedRecord;
   }
 
   return {
     ...post,
     isLiked,
     isReposted,
+    isSaved,
   };
 };
 
+async function enrichAndPaginate(
+  posts: any[],
+  totalItems: number,
+  page: number,
+  limit: number,
+  currentUserId?: string
+) {
+  let likedPostIdSet = new Set<string>();
+  let repostedPostIdSet = new Set<string>();
+  let savedPostIdSet = new Set<string>();
+
+  if (currentUserId && Types.ObjectId.isValid(currentUserId) && posts.length > 0) {
+    const postIds = posts.map((p) => p._id);
+    const userObjId = new Types.ObjectId(currentUserId);
+
+    const [reactions, userReposts, savedList] = await Promise.all([
+      PostReaction.find({ postId: { $in: postIds }, userId: userObjId }).select("postId").lean(),
+      Post.find({ authorId: userObjId, originalPostId: { $in: postIds }, isDeleted: false }).select("originalPostId").lean(),
+      SavedPost.find({ postId: { $in: postIds }, userId: userObjId }).select("postId").lean(),
+    ]);
+
+    likedPostIdSet = new Set(reactions.map((r) => r.postId.toString()));
+    repostedPostIdSet = new Set(userReposts.map((r) => r.originalPostId!.toString()));
+    savedPostIdSet = new Set(savedList.map((s) => s.postId.toString()));
+  }
+
+  const enrichedPosts = posts.map((post) => ({
+    ...post,
+    isLiked: likedPostIdSet.has(post._id.toString()),
+    isReposted: repostedPostIdSet.has(post._id.toString()),
+    isSaved: savedPostIdSet.has(post._id.toString()),
+  }));
+
+  return buildPaginatedResult(enrichedPosts, totalItems, page, limit);
+}
+
 export const getPosts = async (filters: PostFilters = {}, currentUserId?: string) => {
   const { page, limit, skip } = getPaginationOptions({ page: filters.page, limit: filters.limit });
-  const sortOptions: Record<string, 1 | -1> = filters.sort === "oldest" ? { createdAt: 1 } : { createdAt: -1 };
   const query: Record<string, unknown> = { isPublished: true, isDeleted: false };
 
-  if (filters.feedType === "my-network" && currentUserId && Types.ObjectId.isValid(currentUserId)) {
+  if (filters.search) {
+    query.content = { $regex: filters.search, $options: "i" };
+  }
+
+  // Case 1: My Network Feed
+  if (filters.feedType === "my-network") {
+    // Unauthenticated guest has no network
+    if (!currentUserId || !Types.ObjectId.isValid(currentUserId)) {
+      return buildPaginatedResult([], 0, page, limit);
+    }
+
     const userObjId = new Types.ObjectId(currentUserId);
     const connections = await Connection.find({
       $or: [
         { requesterId: userObjId, status: "accepted" },
         { recipientId: userObjId, status: "accepted" },
       ],
-    }).lean();
+    }).select("requesterId recipientId").lean();
 
     const connectedUserIds = connections.map((c) =>
       c.requesterId.toString() === currentUserId ? c.recipientId : c.requesterId
     );
     connectedUserIds.push(userObjId);
     query.authorId = { $in: connectedUserIds };
+
+    const sortOptions: Record<string, 1 | -1> = filters.sort === "oldest" ? { createdAt: 1 } : { createdAt: -1 };
+
+    const [posts, totalItems] = await Promise.all([
+      Post.find(query)
+        .populate("authorId", "name email profilePicture role")
+        .populate({
+          path: "originalPostId",
+          populate: {
+            path: "authorId",
+            select: "name email profilePicture role",
+          },
+        })
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Post.countDocuments(query),
+    ]);
+
+    return enrichAndPaginate(posts, totalItems, page, limit, currentUserId);
   }
 
-  if (filters.search) {
-    query.content = { $regex: filters.search, $options: "i" };
+  // Case 2: For You Feed (Default or explicit 'for-you' when no custom oldest sort)
+  if (filters.feedType === "for-you" && filters.sort !== "oldest") {
+    let connectedObjectIds: Types.ObjectId[] = [];
+    let userObjId: Types.ObjectId | null = null;
+
+    if (currentUserId && Types.ObjectId.isValid(currentUserId)) {
+      userObjId = new Types.ObjectId(currentUserId);
+      const connections = await Connection.find({
+        $or: [
+          { requesterId: userObjId, status: "accepted" },
+          { recipientId: userObjId, status: "accepted" },
+        ],
+      }).select("requesterId recipientId").lean();
+
+      connectedObjectIds = connections.map((c) =>
+        c.requesterId.toString() === currentUserId ? (c.recipientId as Types.ObjectId) : (c.requesterId as Types.ObjectId)
+      );
+    }
+
+    const now = new Date();
+
+    // Aggregation pipeline to deterministically calculate score, sort, and paginate
+    const pipeline: mongoose.PipelineStage[] = [
+      { $match: query },
+      {
+        $addFields: {
+          ageInHours: {
+            $divide: [
+              { $max: [0, { $subtract: [now, "$createdAt"] }] },
+              1000 * 60 * 60,
+            ],
+          },
+          isConnection: connectedObjectIds.length > 0
+            ? { $in: ["$authorId", connectedObjectIds] }
+            : false,
+          isSelf: userObjId
+            ? { $eq: ["$authorId", userObjId] }
+            : false,
+        },
+      },
+      {
+        $addFields: {
+          recencyScore: {
+            $max: [
+              0,
+              { $subtract: [100, { $multiply: ["$ageInHours", 1.5] }] },
+            ],
+          },
+          engagementScore: {
+            $add: [
+              { $multiply: [{ $ifNull: ["$likesCount", 0] }, 3] },
+              { $multiply: [{ $ifNull: ["$commentsCount", 0] }, 5] },
+              { $multiply: [{ $ifNull: ["$repostsCount", 0] }, 6] },
+            ],
+          },
+          affinityScore: {
+            $add: [
+              { $cond: ["$isConnection", 30, 0] },
+              { $cond: ["$isSelf", 15, 0] },
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          score: {
+            $add: ["$recencyScore", "$engagementScore", "$affinityScore"],
+          },
+        },
+      },
+      { $sort: { score: -1, createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      { $project: { _id: 1 } },
+    ];
+
+    const [rankedIdsResult, totalItems] = await Promise.all([
+      Post.aggregate(pipeline),
+      Post.countDocuments(query),
+    ]);
+
+    const rankedIds = rankedIdsResult.map((doc) => doc._id);
+
+    if (rankedIds.length === 0) {
+      return buildPaginatedResult([], totalItems, page, limit);
+    }
+
+    const posts = await Post.find({ _id: { $in: rankedIds } })
+      .populate("authorId", "name email profilePicture role")
+      .populate({
+        path: "originalPostId",
+        populate: {
+          path: "authorId",
+          select: "name email profilePicture role",
+        },
+      })
+      .lean();
+
+    // Preserve the exact ranking order from aggregation
+    const postMap = new Map<string, any>(posts.map((p) => [p._id.toString(), p]));
+    const orderedPosts = rankedIds
+      .map((id) => postMap.get(id.toString()))
+      .filter(Boolean);
+
+    return enrichAndPaginate(orderedPosts, totalItems, page, limit, currentUserId);
   }
+
+  // Case 3: Recent Feed (or fallback explicit sort)
+  const sortOptions: Record<string, 1 | -1> = filters.sort === "oldest" ? { createdAt: 1 } : { createdAt: -1 };
 
   const [posts, totalItems] = await Promise.all([
     Post.find(query)
@@ -279,29 +456,7 @@ export const getPosts = async (filters: PostFilters = {}, currentUserId?: string
     Post.countDocuments(query),
   ]);
 
-  let likedPostIdSet = new Set<string>();
-  let repostedPostIdSet = new Set<string>();
-
-  if (currentUserId && Types.ObjectId.isValid(currentUserId) && posts.length > 0) {
-    const postIds = posts.map((p) => p._id);
-    const userObjId = new Types.ObjectId(currentUserId);
-
-    const [reactions, userReposts] = await Promise.all([
-      PostReaction.find({ postId: { $in: postIds }, userId: userObjId }).select("postId").lean(),
-      Post.find({ authorId: userObjId, originalPostId: { $in: postIds }, isDeleted: false }).select("originalPostId").lean(),
-    ]);
-
-    likedPostIdSet = new Set(reactions.map((r) => r.postId.toString()));
-    repostedPostIdSet = new Set(userReposts.map((r) => r.originalPostId!.toString()));
-  }
-
-  const enrichedPosts = posts.map((post) => ({
-    ...post,
-    isLiked: likedPostIdSet.has(post._id.toString()),
-    isReposted: repostedPostIdSet.has(post._id.toString()),
-  }));
-
-  return buildPaginatedResult(enrichedPosts, totalItems, page, limit);
+  return enrichAndPaginate(posts, totalItems, page, limit, currentUserId);
 };
 
 export const updatePost = async (postId: string, userId: string, updateData: UpdatePostInput) => {
