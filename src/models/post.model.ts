@@ -85,6 +85,9 @@ const postSchema = new Schema<IPost>(
 // Feed query: find all published, non-deleted posts sorted by newest
 postSchema.index({ isPublished: 1, isDeleted: 1, createdAt: -1 });
 
+// Network feed query: find published, non-deleted posts by author list sorted by newest
+postSchema.index({ isPublished: 1, isDeleted: 1, authorId: 1, createdAt: -1 });
+
 // Author's own posts: used by GET /my-posts or profile page
 postSchema.index({ authorId: 1, isDeleted: 1, createdAt: -1 });
 
