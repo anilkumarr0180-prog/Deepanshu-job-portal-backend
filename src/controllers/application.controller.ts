@@ -101,19 +101,43 @@ export const updateApplicationStatus = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const applicationId = req.params.id as string;
     const recruiterId = req.user!.userId;
-    const { status, interviewDetails } = req.body;
+    const { status, reason, interviewDetails, metadata } = req.body;
 
     const application = await applicationService.updateApplicationStatus(
       applicationId,
       recruiterId,
       status,
-      interviewDetails
+      { reason, interviewDetails, metadata }
     );
 
     res.status(HTTP_STATUS.OK).json({
       success: true,
       message: "Application status updated successfully.",
       data: application,
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Application Status History
+|--------------------------------------------------------------------------
+*/
+export const getApplicationHistory = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const applicationId = req.params.id as string;
+    const requesterId = req.user!.userId;
+    const requesterRole = req.user!.role;
+
+    const history = await applicationService.getApplicationHistory(
+      applicationId,
+      requesterId,
+      requesterRole
+    );
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      data: history,
     });
   }
 );

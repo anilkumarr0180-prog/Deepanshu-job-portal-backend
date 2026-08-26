@@ -27,6 +27,7 @@ export interface IApplication extends Document {
     type?: string;
     locationOrLink?: string;
     notes?: string;
+    timezone?: string;
   };
   status: ApplicationStatus;
   isDeleted: boolean;
@@ -127,6 +128,7 @@ const applicationSchema = new Schema<IApplication>(
       type: { type: String, trim: true },
       locationOrLink: { type: String, trim: true },
       notes: { type: String, trim: true },
+      timezone: { type: String, trim: true, default: 'UTC' },
     },
 
     status: {

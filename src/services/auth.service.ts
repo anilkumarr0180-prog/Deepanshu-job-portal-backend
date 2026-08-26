@@ -1,3 +1,7 @@
+import { env } from "../config/env";
+import { sendPasswordResetEmail, sendPasswordResetSuccessEmail } from "./email.service";
+import PasswordResetToken from "../models/password-reset-token.model";
+import crypto from "crypto";
 import { OAuth2Client } from "google-auth-library";
 import User from "../models/user.model";
 import CandidateProfile from "../models/candidate-profile.model";
@@ -370,4 +374,133 @@ export const changePassword = async (
   await user.save();
 
   return { message: "Password updated successfully." };
+};
+
+
+/*
+|--------------------------------------------------------------------------
+| Forgot Password
+|--------------------------------------------------------------------------
+| Generates a cryptographically secure raw token, stores a SHA-256 hash
+| with a 15-minute expiration in PasswordResetToken model, and emails
+| the raw reset link.
+|
+| Always returns a generic 200 message to prevent user enumeration.
+|--------------------------------------------------------------------------
+*/
+export const forgotPassword = async (input: { email: string }) => {
+  const normalizedEmail = input.email.trim().toLowerCase();
+
+  const user = await User.findOne({
+    email: normalizedEmail,
+    isDeleted: false,
+  });
+
+  // Only proceed with token generation if user exists and is not blocked
+  if (user && !user.isBlocked) {
+    try {
+      // Invalidate any existing unused tokens for this user
+      await PasswordResetToken.updateMany(
+        { userId: user._id, usedAt: null },
+        { $set: { usedAt: new Date() } }
+      );
+
+      // Generate 32 bytes of secure random bytes
+      const rawToken = crypto.randomBytes(32).toString("hex");
+
+      // Compute SHA-256 hash for database storage
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+      // Set 15-minute expiration window
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      await PasswordResetToken.create({
+        userId: user._id,
+        tokenHash,
+        expiresAt,
+      });
+
+      const resetUrl = `${env.CLIENT_URL}/reset-password/${rawToken}`;
+
+      // Dispatch password reset email asynchronously
+      void sendPasswordResetEmail({
+        recipientEmail: user.email,
+        recipientName: user.name,
+        resetUrl,
+        expiresInMinutes: 15,
+      });
+    } catch (err) {
+      console.error("[ForgotPassword Error]: Failed to create token or send email:", err);
+      // Still return generic success to avoid leaking system state or user existence
+    }
+  }
+
+  return {
+    message: "If an account with that email exists, a password reset link has been sent.",
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reset Password
+|--------------------------------------------------------------------------
+| Verifies SHA-256 token hash against active unexpired tokens, updates
+| password using bcrypt, and invalidates the token to prevent replay.
+|--------------------------------------------------------------------------
+*/
+export const resetPassword = async (rawToken: string, newPassword: string) => {
+  if (!rawToken || !newPassword) {
+    throw new AppError("Reset token and new password are required.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  // Hash the incoming raw token to find database match
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+  const resetTokenDoc = await PasswordResetToken.findOne({
+    tokenHash,
+    usedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+
+  if (!resetTokenDoc) {
+    throw new AppError(
+      "Password reset link is invalid or has expired.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  const user = await User.findById(resetTokenDoc.userId).select("+password");
+
+  if (!user || user.isDeleted || user.isBlocked) {
+    throw new AppError(
+      "User account is not accessible or has been deactivated.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  // Hash new password using existing bcrypt mechanism
+  const hashedPassword = await hashPassword(newPassword);
+
+  user.password = hashedPassword;
+  if (user.authProvider === "google" && !user.password) {
+    user.authProvider = "local";
+  }
+  await user.save();
+
+  // Mark token as used immediately to prevent replay
+  resetTokenDoc.usedAt = new Date();
+  await resetTokenDoc.save();
+
+  // Invalidate any other active reset tokens for this user
+  await PasswordResetToken.updateMany(
+    { userId: user._id, usedAt: null },
+    { $set: { usedAt: new Date() } }
+  );
+
+  // Send confirmation alert
+  void sendPasswordResetSuccessEmail(user.email, user.name);
+
+  return {
+    message: "Password reset successfully. You can now log in with your new password.",
+  };
 };

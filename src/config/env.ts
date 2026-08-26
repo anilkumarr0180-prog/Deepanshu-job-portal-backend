@@ -78,6 +78,7 @@ if (!RAZORPAY_KEY_SECRET) {
 // ---------------------------------------------------------------------------
 
 export const env = {
+  CLIENT_URL: (process.env.CLIENT_URL || process.env.FRONTEND_URL || "http://localhost:5173").trim(),
   // Server
   PORT: PORT || "5000",
 

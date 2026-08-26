@@ -1108,3 +1108,180 @@ export const sendSubscriptionRenewedEmail = async (params: {
   }
 };
 
+
+
+/*
+|--------------------------------------------------------------------------
+| Password Reset Email Interfaces & Senders
+|--------------------------------------------------------------------------
+*/
+export interface PasswordResetEmailPayload {
+  recipientEmail: string;
+  recipientName: string;
+  resetUrl: string;
+  expiresInMinutes?: number;
+}
+
+export const sendPasswordResetEmail = async (
+  payload: PasswordResetEmailPayload
+): Promise<boolean> => {
+  const { recipientEmail, recipientName, resetUrl, expiresInMinutes = 15 } = payload;
+  const from = getFromHeader();
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reset Your JobBox Password</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+          .header { background: linear-gradient(135deg, #05264E 0%, #1d4ed8 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+          .header p { margin: 8px 0 0 0; opacity: 0.9; font-size: 14px; color: #e2e8f0; }
+          .content { padding: 32px 24px; }
+          .greeting { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #0f172a; }
+          .card { background: #f8fafc; border-left: 4px solid #3C65F5; padding: 18px; border-radius: 8px; margin: 24px 0; }
+          .btn { display: block; width: fit-content; margin: 28px auto; background: #3C65F5; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 10px; font-weight: 600; font-size: 15px; text-align: center; }
+          .warning { background: #fffbeb; border: 1px solid #fef3c7; color: #92400e; padding: 14px; border-radius: 8px; font-size: 13px; margin-top: 24px; line-height: 1.5; }
+          .footer { background: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>JobBox Security</h1>
+            <p>Password Reset Request</p>
+          </div>
+          <div class="content">
+            <div class="greeting">Hello ${recipientName || "there"},</div>
+            <p style="line-height: 1.6; color: #334155; font-size: 15px;">
+              We received a request to reset the password for your <strong>JobBox</strong> account. Click the button below to choose a new password:
+            </p>
+            
+            <a href="${resetUrl}" class="btn">Reset Password &rarr;</a>
+
+            <div class="card">
+              <p style="margin: 0; font-size: 13px; color: #475569;">
+                <strong>⏱️ Expiration Notice:</strong> This password reset link is valid for <strong>${expiresInMinutes} minutes</strong> and can only be used once.
+              </p>
+            </div>
+
+            <div class="warning">
+              <strong>Didn't request this change?</strong> You can safely ignore this email. Your password will remain unchanged, and your account stays secure.
+            </div>
+
+            <p style="font-size: 12px; color: #94a3b8; margin-top: 24px; word-break: break-all;">
+              If the button above does not work, copy and paste this URL into your browser:<br>
+              <a href="${resetUrl}" style="color: #3C65F5;">${resetUrl}</a>
+            </p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Inc. All rights reserved.</p>
+            <p>This is an automated operational security email regarding your account authentication.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    const { transporter, isTestAccount } = await getTransporter();
+    const info = await transporter.sendMail({
+      from,
+      to: recipientEmail,
+      subject: "Reset Your JobBox Password",
+      html,
+    });
+    console.log(`[SMTP] Password reset email sent to ${recipientEmail}: ${info.messageId}`);
+    if (isTestAccount) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - PASSWORD RESET]: ${previewUrl}`);
+    }
+    return true;
+  } catch (error: any) {
+    console.warn(`[SMTP WARN] Primary SMTP password reset send to (${recipientEmail}) failed: ${error?.message || error}. Falling back to Ethereal...`);
+    try {
+      const testAccount = await nodemailer.createTestAccount();
+      const fallbackTransporter = nodemailer.createTransport({
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: { user: testAccount.user, pass: testAccount.pass },
+      });
+      const info = await fallbackTransporter.sendMail({
+        from: '"JobsBox Security" <no-reply@jobsbox.com>',
+        to: recipientEmail,
+        subject: "Reset Your JobBox Password",
+        html,
+      });
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - PASSWORD RESET (FALLBACK)]: ${previewUrl}`);
+      return true;
+    } catch (fallbackErr) {
+      console.error(`[SMTP ERROR] Fallback transport also failed for password reset (${recipientEmail}):`, fallbackErr);
+      return false;
+    }
+  }
+};
+
+export const sendPasswordResetSuccessEmail = async (
+  recipientEmail: string,
+  recipientName: string
+): Promise<boolean> => {
+  const from = getFromHeader();
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Password Reset Successful</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+          .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 24px; font-weight: 700; }
+          .content { padding: 32px 24px; }
+          .greeting { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #0f172a; }
+          .footer { background: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Password Changed Successfully ✅</h1>
+          </div>
+          <div class="content">
+            <div class="greeting">Hello ${recipientName || "there"},</div>
+            <p style="line-height: 1.6; color: #334155; font-size: 15px;">
+              Your JobBox account password has been successfully updated. You can now log in using your new credentials.
+            </p>
+            <p style="line-height: 1.6; color: #dc2626; font-size: 13px;">
+              If you did not perform this password reset, please contact our support team immediately.
+            </p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Inc. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    const { transporter } = await getTransporter();
+    await transporter.sendMail({
+      from,
+      to: recipientEmail,
+      subject: "Your JobBox Password Was Reset Successfully",
+      html,
+    });
+    return true;
+  } catch (err) {
+    console.warn("[SMTP WARN] Failed to send password reset confirmation email:", err);
+    return false;
+  }
+};

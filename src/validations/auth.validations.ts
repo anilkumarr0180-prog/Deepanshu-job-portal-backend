@@ -102,3 +102,30 @@ export const changePasswordSchema = z.object({
       ),
   }),
 });
+
+
+export const forgotPasswordSchema = z.object({
+  body: z.object({
+    email: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .email("Please provide a valid email address."),
+  }),
+});
+
+export const resetPasswordSchema = z.object({
+  params: z.object({
+    token: z.string().min(1, "Reset token is required."),
+  }),
+  body: z.object({
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters.")
+      .max(100, "Password cannot exceed 100 characters.")
+      .regex(
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$/,
+        "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character."
+      ),
+  }),
+});

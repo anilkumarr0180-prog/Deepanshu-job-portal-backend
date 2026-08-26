@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { APPLICATION_STATUS } from "../constants/application-status";
 
-
 export const applyJobSchema = z.object({
   params: z.object({
     id: z.string().regex(
@@ -55,7 +54,6 @@ export const applyJobSchema = z.object({
   }),
 });
 
-
 export const getJobApplicationsSchema = z.object({
   params: z.object({
     id: z.string().regex(
@@ -79,21 +77,12 @@ export const updateApplicationStatusSchema = z.object({
     ),
   }),
   body: z.object({
-    status: z.enum([
-      APPLICATION_STATUS.APPLIED,
-      APPLICATION_STATUS.UNDER_REVIEW,
-      APPLICATION_STATUS.SHORTLISTED,
-      APPLICATION_STATUS.INTERVIEW,
-      APPLICATION_STATUS.REJECTED,
-      APPLICATION_STATUS.HIRED,
-      "applied",
-      "under review",
-      "under_review",
-      "shortlisted",
-      "interview",
-      "rejected",
-      "hired",
-    ]),
+    status: z.string().trim().min(1, "Status cannot be empty."),
+    reason: z
+      .string()
+      .trim()
+      .max(1000, "Reason cannot exceed 1000 characters.")
+      .optional(),
     interviewDetails: z
       .object({
         mode: z.enum(["video", "in-person", "phone"]).optional(),
@@ -102,8 +91,24 @@ export const updateApplicationStatusSchema = z.object({
         type: z.string().optional(),
         locationOrLink: z.string().optional(),
         notes: z.string().optional(),
+        timezone: z.string().optional(),
       })
       .optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
+  }),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Get Application History
+|--------------------------------------------------------------------------
+*/
+export const getApplicationHistorySchema = z.object({
+  params: z.object({
+    id: z.string().regex(
+      /^[0-9a-fA-F]{24}$/,
+      "Invalid application id."
+    ),
   }),
 });
 
@@ -146,6 +151,7 @@ export const getApplicationsQuerySchema = z.object({
       status: z
         .enum([
           APPLICATION_STATUS.APPLIED,
+          APPLICATION_STATUS.UNDER_REVIEW,
           APPLICATION_STATUS.SHORTLISTED,
           APPLICATION_STATUS.INTERVIEW,
           APPLICATION_STATUS.REJECTED,
