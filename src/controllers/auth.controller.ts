@@ -84,3 +84,29 @@ export const changePassword = asyncHandler(
     });
   }
 );
+
+
+export const forgotPassword = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const result = await authService.forgotPassword(req.body);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: result.message,
+    });
+  }
+);
+
+export const resetPassword = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const token = req.params.token as string;
+    const { password } = req.body;
+
+    const result = await authService.resetPassword(token, password);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: result.message,
+    });
+  }
+);

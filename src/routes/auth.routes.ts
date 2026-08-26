@@ -5,6 +5,8 @@ import {
   googleAuth,
   getCurrentUser,
   changePassword,
+  forgotPassword,
+  resetPassword,
 } from "../controllers/auth.controller";
 import { validate } from "../middleware/validation.middleware";
 import {
@@ -12,6 +14,8 @@ import {
   loginSchema,
   googleAuthSchema,
   changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } from "../validations/auth.validations";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authRateLimiter } from "../config/rate-limit";
@@ -50,6 +54,20 @@ router.patch(
   authMiddleware,
   validate(changePasswordSchema),
   changePassword
+);
+
+router.post(
+  "/forgot-password",
+  authRateLimiter,
+  validate(forgotPasswordSchema),
+  forgotPassword
+);
+
+router.post(
+  "/reset-password/:token",
+  authRateLimiter,
+  validate(resetPasswordSchema),
+  resetPassword
 );
 
 export default router;

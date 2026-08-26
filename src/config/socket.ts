@@ -382,6 +382,78 @@ export const initSocketServer = (
     | Disconnect Handler
     |--------------------------------------------------------------------------
     */
+    
+    /*
+    |--------------------------------------------------------------------------
+    | ATS Real-Time Kanban Synchronization Handlers
+    |--------------------------------------------------------------------------
+    */
+    socket.on("join_ats_recruiter", async () => {
+      try {
+        if (!userId) return;
+        const userRoom = `recruiter_ats_${userId}`;
+        socket.join(userRoom);
+
+        // Also check if recruiter belongs to a company and join company ATS room
+        try {
+          const { getAuthorizedCompanyForRecruiter } = await import("../services/company.service");
+          const auth = await getAuthorizedCompanyForRecruiter(userId);
+          if (auth?.company?._id) {
+            const companyRoom = `company_ats_${auth.company._id.toString()}`;
+            socket.join(companyRoom);
+          }
+        } catch {
+          // Ignore if no company
+        }
+
+        socket.emit("joined_ats_recruiter", { userId });
+      } catch (err) {
+        console.error("Error in join_ats_recruiter:", err);
+      }
+    });
+
+    socket.on("join_ats_job", async (data: { jobId: string }) => {
+      try {
+        const { jobId } = data;
+        if (!jobId || !userId) return;
+
+        const Job = (await import("../models/job.model")).default;
+        const job = await Job.findOne({ _id: jobId, isDeleted: false }).lean();
+        if (!job) {
+          socket.emit("error", { message: "Job not found." });
+          return;
+        }
+
+        const { getAuthorizedCompanyForRecruiter } = await import("../services/company.service");
+        const auth = await getAuthorizedCompanyForRecruiter(userId);
+
+        const isDirectOwner = job.recruiterId.toString() === userId;
+        const isCompanyTeammate = Boolean(
+          auth && job.companyId && auth.company._id.toString() === job.companyId.toString()
+        );
+        const isAdmin = socket.user?.role === "admin";
+
+        if (!isDirectOwner && !isCompanyTeammate && !isAdmin) {
+          socket.emit("error", { message: "Unauthorized ATS subscription for job." });
+          return;
+        }
+
+        const jobRoom = `job_ats_${jobId}`;
+        socket.join(jobRoom);
+        socket.emit("joined_ats_job", { jobId });
+      } catch (err) {
+        console.error("Error in join_ats_job:", err);
+        socket.emit("error", { message: "Failed to join ATS job room." });
+      }
+    });
+
+    socket.on("leave_ats_job", (data: { jobId: string }) => {
+      const { jobId } = data;
+      if (jobId) {
+        socket.leave(`job_ats_${jobId}`);
+      }
+    });
+
     socket.on("disconnect", (reason) => {
       // Differentiate normal client lifecycle (navigating/closing tab/polling abort) from unexpected server issues
       const isExpectedClosure =
@@ -433,3 +505,48 @@ export const broadcastNotification = (notification: unknown) => {
   if (!io) return;
   io.emit("notification:broadcast", notification);
 };
+
+
+export interface ApplicationStatusChangedEvent {
+  applicationId: string;
+  jobId: string;
+  companyId?: string;
+  fromStatus: string;
+  toStatus: string;
+  changedBy: string;
+  updatedAt: string;
+  metadata?: any;
+}
+
+export const emitApplicationStatusChanged = (event: ApplicationStatusChangedEvent) => {
+  if (!io) return;
+
+  const { applicationId, jobId, companyId, fromStatus, toStatus, changedBy, updatedAt, metadata } = event;
+  const payload = {
+    applicationId,
+    jobId,
+    companyId,
+    fromStatus,
+    toStatus,
+    changedBy,
+    updatedAt: updatedAt || new Date().toISOString(),
+    metadata,
+  };
+
+  // 1. Emit to job room
+  if (jobId) {
+    io.to(`job_ats_${jobId}`).emit("application:status_changed", payload);
+  }
+
+  // 2. Emit to company room if applicable
+  if (companyId) {
+    io.to(`company_ats_${companyId}`).emit("application:status_changed", payload);
+  }
+
+  // 3. Emit to recruiter personal rooms
+  if (changedBy) {
+    io.to(`recruiter_ats_${changedBy}`).emit("application:status_changed", payload);
+    io.to(`user_${changedBy}`).emit("application:status_changed", payload);
+  }
+};
+

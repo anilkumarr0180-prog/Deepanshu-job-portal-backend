@@ -6,6 +6,7 @@ import {
   getJobApplications,
   getRecruiterApplications,
   updateApplicationStatus,
+  getApplicationHistory,
   withdrawApplication,
 } from "../controllers/application.controller";
 
@@ -17,6 +18,7 @@ import {
   applyJobSchema,
   getJobApplicationsSchema,
   updateApplicationStatusSchema,
+  getApplicationHistorySchema,
   withdrawApplicationSchema,
   getApplicationsQuerySchema,
 } from "../validations/application.validations";
@@ -84,16 +86,38 @@ router.get(
 
 /*
 |--------------------------------------------------------------------------
-| Update Application Status
+| Update Application Status (PATCH & PUT for ATS Workflow)
 |--------------------------------------------------------------------------
 */
+
+router.patch(
+  "/applications/:id/status",
+  authMiddleware,
+  authorize(USER_ROLES.RECRUITER, USER_ROLES.ADMIN),
+  validate(updateApplicationStatusSchema),
+  updateApplicationStatus
+);
 
 router.put(
   "/applications/:id/status",
   authMiddleware,
-  authorize(USER_ROLES.RECRUITER),
+  authorize(USER_ROLES.RECRUITER, USER_ROLES.ADMIN),
   validate(updateApplicationStatusSchema),
   updateApplicationStatus
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Application Status History (Audit Trail)
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/applications/:id/history",
+  authMiddleware,
+  authorize(USER_ROLES.RECRUITER, USER_ROLES.ADMIN, USER_ROLES.CANDIDATE),
+  validate(getApplicationHistorySchema),
+  getApplicationHistory
 );
 
 /*

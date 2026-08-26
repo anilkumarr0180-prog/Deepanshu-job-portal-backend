@@ -1,4 +1,6 @@
+import mongoose, { Types } from "mongoose";
 import Application from "../models/application.model";
+import ApplicationStatusHistory from "../models/application-status-history.model";
 import Job from "../models/job.model";
 import User from "../models/user.model";
 import CandidateProfile from "../models/candidate-profile.model";
@@ -16,6 +18,11 @@ import {
   APPLICATION_STATUS,
   ApplicationStatus,
 } from "../constants/application-status";
+import {
+  normalizeApplicationStatus,
+  isValidStatusTransition,
+  isTerminalApplicationStatus,
+} from "../constants/application-transitions";
 import { JOB_STATUS } from "../constants/job-status";
 import { createNotification } from "./notification.service";
 import { NOTIFICATION_TYPES } from "../constants/notification-type";
@@ -43,6 +50,20 @@ interface ApplicationFilters {
   limit?: string;
   sort?: string;
   status?: ApplicationStatus;
+}
+
+export interface UpdateStatusOptions {
+  reason?: string;
+  interviewDetails?: {
+    mode?: "video" | "in-person" | "phone";
+    date?: string;
+    time?: string;
+    type?: string;
+    locationOrLink?: string;
+    notes?: string;
+  };
+  metadata?: Record<string, any>;
+  [key: string]: any;
 }
 
 /*
@@ -568,16 +589,31 @@ export const getRecruiterApplications = async (
 
 /*
 |--------------------------------------------------------------------------
-| Update Application Status
+| Update Application Status (ATS Centralized Transition Engine)
 |--------------------------------------------------------------------------
 */
 
 export const updateApplicationStatus = async (
   applicationId: string,
   recruiterId: string,
-  status: string,
-  interviewDetails?: any
+  statusInput: string,
+  optionsOrDetails?: any
 ) => {
+  if (!Types.ObjectId.isValid(applicationId)) {
+    throw new AppError(
+      "Invalid application ID.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  const normalizedTargetStatus = normalizeApplicationStatus(statusInput);
+  if (!normalizedTargetStatus) {
+    throw new AppError(
+      `Invalid application status: "${statusInput}".`,
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
   const application = await Application.findOne({
     _id: applicationId,
     isDeleted: false,
@@ -599,13 +635,20 @@ export const updateApplicationStatus = async (
     );
   }
 
+  /* -------------------------------------------------------------------------- */
+  /* Recruiter Authorization Verification                                       */
+  /* -------------------------------------------------------------------------- */
+
   const auth = await getAuthorizedCompanyForRecruiter(recruiterId);
   const isDirectOwner = job.recruiterId.toString() === recruiterId;
   const isCompanyTeammate = Boolean(
     auth && job.companyId && auth.company._id.toString() === job.companyId.toString()
   );
 
-  if (!isDirectOwner && !isCompanyTeammate) {
+  const recruiterUser = await User.findById(recruiterId).select("role").lean();
+  const isAdmin = recruiterUser?.role === "admin";
+
+  if (!isDirectOwner && !isCompanyTeammate && !isAdmin) {
     throw new AppError(
       "You are not authorized to update this application.",
       HTTP_STATUS.FORBIDDEN
@@ -613,74 +656,59 @@ export const updateApplicationStatus = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Status Transition Checks & Normalization                                   */
+  /* Parse Options & Legacy Interview Details                                    */
   /* -------------------------------------------------------------------------- */
 
-  const normalizedStatusMap: Record<string, string> = {
-    applied: APPLICATION_STATUS.APPLIED,
-    "under review": APPLICATION_STATUS.UNDER_REVIEW,
-    under_review: APPLICATION_STATUS.UNDER_REVIEW,
-    shortlisted: APPLICATION_STATUS.SHORTLISTED,
-    interview: APPLICATION_STATUS.INTERVIEW,
-    rejected: APPLICATION_STATUS.REJECTED,
-    hired: APPLICATION_STATUS.HIRED,
-  };
+  let options: UpdateStatusOptions = {};
+  if (optionsOrDetails && typeof optionsOrDetails === "object") {
+    if (
+      optionsOrDetails.mode ||
+      optionsOrDetails.date ||
+      optionsOrDetails.time ||
+      optionsOrDetails.type ||
+      optionsOrDetails.locationOrLink
+    ) {
+      options = { interviewDetails: optionsOrDetails };
+    } else {
+      options = optionsOrDetails;
+    }
+  }
 
-  const targetStatus =
-    typeof status === "string"
-      ? normalizedStatusMap[status.toLowerCase()] || status
-      : status;
+  const { interviewDetails, reason, metadata } = options;
+  const currentStatus = application.status;
 
-  if (application.status === targetStatus) {
-    if (targetStatus === APPLICATION_STATUS.INTERVIEW && interviewDetails) {
+  /* -------------------------------------------------------------------------- */
+  /* Idempotent No-Op Status Check                                              */
+  /* -------------------------------------------------------------------------- */
+
+  if (currentStatus === normalizedTargetStatus) {
+    if (normalizedTargetStatus === APPLICATION_STATUS.INTERVIEW && interviewDetails) {
       application.interviewDetails = interviewDetails;
       await application.save();
     }
     return application;
   }
 
-  if (
-    application.status === APPLICATION_STATUS.HIRED ||
-    application.status === APPLICATION_STATUS.REJECTED
-  ) {
+  /* -------------------------------------------------------------------------- */
+  /* Terminal Status & Centralized State-Machine Transition Policy              */
+  /* -------------------------------------------------------------------------- */
+
+  if (isTerminalApplicationStatus(currentStatus)) {
     throw new AppError(
-      "Cannot change status of a finalized application.",
+      `Cannot change status of a finalized application from "${currentStatus}".`,
       HTTP_STATUS.CONFLICT
     );
   }
 
-  // Proper State-Machine Transition Matrix
-  const VALID_TRANSITIONS: Record<string, string[]> = {
-    [APPLICATION_STATUS.APPLIED]: [
-      APPLICATION_STATUS.UNDER_REVIEW,
-      APPLICATION_STATUS.SHORTLISTED,
-      APPLICATION_STATUS.REJECTED,
-    ],
-    [APPLICATION_STATUS.UNDER_REVIEW]: [
-      APPLICATION_STATUS.SHORTLISTED,
-      APPLICATION_STATUS.INTERVIEW,
-      APPLICATION_STATUS.REJECTED,
-    ],
-    [APPLICATION_STATUS.SHORTLISTED]: [
-      APPLICATION_STATUS.INTERVIEW,
-      APPLICATION_STATUS.REJECTED,
-    ],
-    [APPLICATION_STATUS.INTERVIEW]: [
-      APPLICATION_STATUS.HIRED,
-      APPLICATION_STATUS.REJECTED,
-    ],
-  };
-
-  const allowedNext = VALID_TRANSITIONS[application.status] || [];
-  if (!allowedNext.includes(targetStatus)) {
+  if (!isValidStatusTransition(currentStatus, normalizedTargetStatus)) {
     throw new AppError(
-      `Cannot transition application status from "${application.status}" to "${targetStatus}".`,
+      `Cannot transition application status from "${currentStatus}" to "${normalizedTargetStatus}".`,
       HTTP_STATUS.BAD_REQUEST
     );
   }
 
   // Validate required interview details when transitioning to INTERVIEW
-  if (targetStatus === APPLICATION_STATUS.INTERVIEW) {
+  if (normalizedTargetStatus === APPLICATION_STATUS.INTERVIEW) {
     if (
       !interviewDetails ||
       typeof interviewDetails !== "object" ||
@@ -695,86 +723,273 @@ export const updateApplicationStatus = async (
   }
 
   /* -------------------------------------------------------------------------- */
-  /* Update Status & Interview Details                                          */
+  /* Atomic Transaction Execution with Optimistic Concurrency Protection         */
   /* -------------------------------------------------------------------------- */
 
-  application.status = targetStatus as ApplicationStatus;
-  if (interviewDetails) {
-    application.interviewDetails = interviewDetails;
-  }
+  let updatedApp: any = null;
+  let historyRecord: any = null;
 
-  await application.save();
+  let session: mongoose.ClientSession | null = null;
+  let useTransaction = true;
 
   try {
-    if (application.applicantId) {
-      let notifTitle = "Application Status Updated";
-      let notifBody = `Your application status for "${job.title}" has been updated to ${targetStatus}.`;
+    session = await mongoose.startSession();
+    session.startTransaction();
+  } catch (_e) {
+    // If standalone MongoDB does not support transactions, gracefully fall back
+    useTransaction = false;
+    if (session) {
+      await session.endSession().catch(() => {});
+      session = null;
+    }
+  }
 
-      switch (targetStatus) {
-        case APPLICATION_STATUS.UNDER_REVIEW:
-          notifTitle = "Application Reviewed 👁️";
-          notifBody = `A recruiter reviewed your application for "${job.title}".`;
-          break;
-        case APPLICATION_STATUS.SHORTLISTED:
-          notifTitle = "Application Shortlisted ⭐";
-          notifBody = `Great news! Your application for "${job.title}" has been shortlisted.`;
-          break;
-        case APPLICATION_STATUS.INTERVIEW:
-          notifTitle = "Interview Scheduled 📅";
-          const modeLabel = interviewDetails?.mode === "in-person"
-            ? "In-Person On-Site"
-            : interviewDetails?.mode === "phone"
-            ? "Phone Call"
-            : "Video Call";
-          const whenStr = interviewDetails?.date ? ` on ${interviewDetails.date} at ${interviewDetails.time || ""}` : "";
-          notifBody = `An interview (${modeLabel}) was scheduled for "${job.title}"${whenStr}.`;
-          break;
-        case APPLICATION_STATUS.HIRED:
-          notifTitle = "Job Offer Received 🎉";
-          notifBody = `Congratulations! You have received a job offer for "${job.title}".`;
-          break;
-        case APPLICATION_STATUS.REJECTED:
-          notifTitle = "Application Update 📋";
-          notifBody = `Your application status for "${job.title}" has been updated.`;
-          break;
-      }
+  try {
+    const updatePayload: Record<string, any> = {
+      $set: {
+        status: normalizedTargetStatus,
+        ...(interviewDetails ? { interviewDetails } : {}),
+      },
+    };
 
-      await createNotification({
-        recipientId: application.applicantId.toString(),
-        senderId: recruiterId,
-        type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
-        title: notifTitle,
-        body: notifBody,
-        link: `/candidate/applied`,
-        metadata: {
-          jobId: job._id.toString(),
-          applicationId: application._id.toString(),
-          status: targetStatus,
-        },
-      });
+    const sessionOption = useTransaction && session ? { session, returnDocument: "after" as const } : { returnDocument: "after" as const };
 
-      // Dispatch SMTP Email to Candidate regarding status update
-      const candidateUser = await User.findById(application.applicantId)
-        .select("name email")
-        .lean();
+    // Concurrency Lock: only update if document status matches the verified currentStatus
+    updatedApp = await Application.findOneAndUpdate(
+      {
+        _id: applicationId,
+        status: currentStatus,
+        isDeleted: false,
+      },
+      updatePayload,
+      sessionOption
+    );
 
-      if (candidateUser && candidateUser.email) {
-        const companyName = job.company || "JobsBox Partner";
-        void sendApplicationStatusUpdateEmail({
-          applicantName: candidateUser.name || "Candidate",
-          applicantEmail: candidateUser.email,
-          jobTitle: job.title,
-          companyName,
-          status: targetStatus,
-          applicationId: application._id.toString(),
-        });
+    if (!updatedApp) {
+      // Status was changed concurrently by another recruiter/process
+      throw new AppError(
+        "Application status was modified by another session. Please refresh and try again.",
+        HTTP_STATUS.CONFLICT
+      );
+    }
+
+    // Atomic History Creation
+    const historyPayload = {
+      applicationId: updatedApp._id,
+      jobId: updatedApp.jobId,
+      fromStatus: currentStatus,
+      toStatus: normalizedTargetStatus,
+      changedBy: new Types.ObjectId(recruiterId),
+      reason: reason || undefined,
+      metadata: metadata || (interviewDetails ? { interviewDetails } : undefined),
+    };
+
+    if (useTransaction && session) {
+      const createdHistoryDocs = await ApplicationStatusHistory.create([historyPayload], { session });
+      historyRecord = createdHistoryDocs[0];
+      await session.commitTransaction();
+    } else {
+      historyRecord = await ApplicationStatusHistory.create(historyPayload);
+    }
+  } catch (error) {
+    if (useTransaction && session) {
+      await session.abortTransaction().catch(() => {});
+    }
+    throw error;
+  } finally {
+    if (session) {
+      await session.endSession().catch(() => {});
+    }
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Real-Time ATS WebSocket Synchronization Event Dispatch                      */
+  /* -------------------------------------------------------------------------- */
+
+  try {
+    const { emitApplicationStatusChanged } = await import("../config/socket");
+    emitApplicationStatusChanged({
+      applicationId: updatedApp._id.toString(),
+      jobId: job._id.toString(),
+      companyId: job.companyId ? job.companyId.toString() : undefined,
+      fromStatus: currentStatus,
+      toStatus: normalizedTargetStatus,
+      changedBy: recruiterId,
+      updatedAt: updatedApp.updatedAt ? new Date(updatedApp.updatedAt).toISOString() : new Date().toISOString(),
+      metadata: metadata || (interviewDetails ? { interviewDetails } : undefined),
+    });
+  } catch (socketErr) {
+    console.error("Failed to emit real-time ATS status event:", socketErr);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Post-Commit Asynchronous Real-Time Notification & Email Dispatch           */
+  /* -------------------------------------------------------------------------- */
+
+  try {
+    if (updatedApp.applicantId) {
+      const NOTIFY_CANDIDATE_STATUSES = [
+        APPLICATION_STATUS.UNDER_REVIEW,
+        APPLICATION_STATUS.SHORTLISTED,
+        APPLICATION_STATUS.INTERVIEW,
+        APPLICATION_STATUS.HIRED,
+        APPLICATION_STATUS.REJECTED,
+      ];
+
+      if (NOTIFY_CANDIDATE_STATUSES.includes(normalizedTargetStatus as any)) {
+        let notifTitle = "Application Status Updated";
+        let notifBody = `Your application status for "${job.title}" has been updated to ${normalizedTargetStatus}.`;
+
+        switch (normalizedTargetStatus) {
+          case APPLICATION_STATUS.UNDER_REVIEW:
+            notifTitle = "Application Under Review 👁️";
+            notifBody = `A recruiter is currently reviewing your application for "${job.title}".`;
+            break;
+          case APPLICATION_STATUS.SHORTLISTED:
+            notifTitle = "Application Shortlisted ⭐";
+            notifBody = `Great news! Your application for "${job.title}" has been shortlisted.`;
+            break;
+          case APPLICATION_STATUS.INTERVIEW:
+            notifTitle = "Interview Scheduled 📅";
+            const modeLabel = interviewDetails?.mode === "in-person"
+              ? "In-Person On-Site"
+              : interviewDetails?.mode === "phone"
+              ? "Phone Call"
+              : "Video Call";
+            const whenStr = interviewDetails?.date ? ` on ${interviewDetails.date} at ${interviewDetails.time || ""}` : "";
+            notifBody = `An interview (${modeLabel}) was scheduled for "${job.title}"${whenStr}.`;
+            break;
+          case APPLICATION_STATUS.HIRED:
+            notifTitle = "Job Offer Received 🎉";
+            notifBody = `Congratulations! You have been hired for "${job.title}".`;
+            break;
+          case APPLICATION_STATUS.REJECTED:
+            notifTitle = "Application Update 📋";
+            notifBody = `Your application status for "${job.title}" has been updated.`;
+            break;
+        }
+
+        const NotificationModel = (await import("../models/notification.model")).default;
+        
+        // Idempotency check: prevent duplicate notifications within recent 10-minute window
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const existingRecentNotification = await NotificationModel.findOne({
+          recipientId: updatedApp.applicantId,
+          type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+          "metadata.applicationId": updatedApp._id.toString(),
+          "metadata.status": normalizedTargetStatus,
+          createdAt: { $gte: tenMinutesAgo },
+        }).lean();
+
+        if (!existingRecentNotification) {
+          await createNotification({
+            recipientId: updatedApp.applicantId.toString(),
+            senderId: recruiterId,
+            type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+            title: notifTitle,
+            body: notifBody,
+            link: `/candidate/applied`,
+            metadata: {
+              jobId: job._id.toString(),
+              applicationId: updatedApp._id.toString(),
+              status: normalizedTargetStatus,
+            },
+          });
+
+          // Dispatch SMTP Email to Candidate regarding status update
+          const candidateUser = await User.findById(updatedApp.applicantId)
+            .select("name email")
+            .lean();
+
+          if (candidateUser && candidateUser.email) {
+            const companyName = job.company || "JobsBox Partner";
+            void sendApplicationStatusUpdateEmail({
+              applicantName: candidateUser.name || "Candidate",
+              applicantEmail: candidateUser.email,
+              jobTitle: job.title,
+              companyName,
+              status: normalizedTargetStatus,
+              applicationId: updatedApp._id.toString(),
+            });
+          }
+        }
       }
     }
   } catch (err) {
     console.error("Failed to send notification or email on application status update:", err);
   }
 
-  return application;
+  return updatedApp;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Application Status History (Audit Trail)
+|--------------------------------------------------------------------------
+*/
+export const getApplicationHistory = async (
+  applicationId: string,
+  requesterId: string,
+  requesterRole: string
+) => {
+  if (!Types.ObjectId.isValid(applicationId)) {
+    throw new AppError(
+      "Invalid application ID.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  const application = await Application.findOne({
+    _id: applicationId,
+    isDeleted: false,
+  });
+
+  if (!application) {
+    throw new AppError(
+      "Application not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
+  }
+
+  const job = await Job.findOne({ _id: application.jobId, isDeleted: false });
+  if (!job) {
+    throw new AppError(
+      "Job not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
+  }
+
+  // Authorization Check
+  if (requesterRole === "candidate") {
+    if (application.applicantId.toString() !== requesterId) {
+      throw new AppError(
+        "You are not authorized to view this application history.",
+        HTTP_STATUS.FORBIDDEN
+      );
+    }
+  } else if (requesterRole === "recruiter") {
+    const auth = await getAuthorizedCompanyForRecruiter(requesterId);
+    const isDirectOwner = job.recruiterId.toString() === requesterId;
+    const isCompanyTeammate = Boolean(
+      auth && job.companyId && auth.company._id.toString() === job.companyId.toString()
+    );
+
+    if (!isDirectOwner && !isCompanyTeammate) {
+      throw new AppError(
+        "You are not authorized to view this application history.",
+        HTTP_STATUS.FORBIDDEN
+      );
+    }
+  }
+
+  const history = await ApplicationStatusHistory.find({
+    applicationId: new Types.ObjectId(applicationId),
+  })
+    .populate("changedBy", "name email role profilePicture")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return history;
 };
 
 /*
@@ -821,4 +1036,4 @@ export const withdrawApplication = async (
   await application.save();
 
   return;
-};
+};
