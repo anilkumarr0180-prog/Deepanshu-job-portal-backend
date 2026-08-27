@@ -422,16 +422,22 @@ export const forgotPassword = async (input: { email: string }) => {
 
       const resetUrl = `${env.CLIENT_URL}/reset-password/${rawToken}`;
 
-      // Dispatch password reset email asynchronously
-      void sendPasswordResetEmail({
+      console.log(`\n======================================================`);
+      console.log(`🔑 [PASSWORD RESET LINK GENERATED FOR ${user.email}]:`);
+      console.log(`👉 ${resetUrl}`);
+      console.log(`======================================================\n`);
+
+      // Dispatch password reset email asynchronously with error catching so API responds instantly
+      sendPasswordResetEmail({
         recipientEmail: user.email,
         recipientName: user.name,
         resetUrl,
         expiresInMinutes: 15,
+      }).catch((err) => {
+        console.error("[SMTP ERROR] Background reset email dispatch failed:", err?.message || err);
       });
     } catch (err) {
       console.error("[ForgotPassword Error]: Failed to create token or send email:", err);
-      // Still return generic success to avoid leaking system state or user existence
     }
   }
 
