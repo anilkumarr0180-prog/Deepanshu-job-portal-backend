@@ -195,6 +195,12 @@ export const initSocketServer = (
             const recipientRoom = `user_${recipientId}`;
             const unreadTotal = await chatService.getUnreadChatCount(recipientId);
 
+            // Emit message_received to recipient private user room to guarantee real-time delivery
+            io?.to(recipientRoom).emit("message_received", {
+              message: createdMessage,
+              conversationId,
+            });
+
             io?.to(recipientRoom).emit("conversation_updated", {
               conversationId,
               lastMessage: createdMessage,

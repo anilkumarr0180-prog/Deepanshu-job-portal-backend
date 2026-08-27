@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { HTTP_STATUS } from "../constants/http-status";
 import * as chatService from "../services/chat.service";
 import { asyncHandler } from "../middleware/async-handler";
+import Conversation from "../models/conversation.model";
+import { getIO } from "../config/socket";
 
 import { UserRole } from "../constants/roles";
 
@@ -36,6 +38,24 @@ export const createOrGetConversationController = asyncHandler(
       targetUserId,
       userId as string
     );
+
+    try {
+      const io = getIO();
+      const candIdStr = conversation.candidateId?._id?.toString() || conversation.candidateId?.toString();
+      const recIdStr = conversation.recruiterId?._id?.toString() || conversation.recruiterId?.toString();
+      const recipientId = candIdStr === userId ? recIdStr : candIdStr;
+
+      if (recipientId) {
+        const unreadTotal = await chatService.getUnreadChatCount(recipientId);
+        io.to(`user_${recipientId}`).emit("conversation_updated", {
+          conversationId: conversation._id.toString(),
+          lastMessage: conversation.lastMessageId || null,
+          unreadTotal,
+        });
+      }
+    } catch {
+      // socket server might not be initialized yet in test mode
+    }
 
     res.status(HTTP_STATUS.OK).json({
       success: true,
@@ -105,6 +125,39 @@ export const sendMessageController = asyncHandler(
       messageType,
       attachments
     );
+
+    try {
+      const io = getIO();
+      const convRoom = `conversation_${conversationId}`;
+      io.to(convRoom).emit("message_received", {
+        message: newMessage,
+        conversationId,
+      });
+
+      const conversation = await Conversation.findById(conversationId).lean();
+      if (conversation) {
+        const recipientId =
+          conversation.candidateId.toString() === userId
+            ? conversation.recruiterId.toString()
+            : conversation.candidateId.toString();
+
+        const recipientRoom = `user_${recipientId}`;
+        const unreadTotal = await chatService.getUnreadChatCount(recipientId);
+
+        io.to(recipientRoom).emit("message_received", {
+          message: newMessage,
+          conversationId,
+        });
+
+        io.to(recipientRoom).emit("conversation_updated", {
+          conversationId,
+          lastMessage: newMessage,
+          unreadTotal,
+        });
+      }
+    } catch {
+      // ignore if socket server is not initialized
+    }
 
     res.status(HTTP_STATUS.CREATED).json({
       success: true,
