@@ -88,7 +88,21 @@ export const changePassword = asyncHandler(
 
 export const forgotPassword = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const result = await authService.forgotPassword(req.body);
+    const rawOrigin = (req.headers.origin || req.headers.referer || "") as string;
+    let origin: string | undefined;
+    if (rawOrigin) {
+      try {
+        const parsed = new URL(rawOrigin);
+        origin = parsed.origin;
+      } catch {
+        origin = undefined;
+      }
+    }
+
+    const result = await authService.forgotPassword({
+      email: req.body.email,
+      origin,
+    });
 
     res.status(HTTP_STATUS.OK).json({
       success: true,

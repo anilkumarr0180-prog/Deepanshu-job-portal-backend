@@ -122,6 +122,10 @@ export const env = {
   RAZORPAY_PLAN_CANDIDATE_PRO: (process.env.RAZORPAY_PLAN_CANDIDATE_PRO || "plan_TPc0Up5ZDc7IGE").trim(),
   RAZORPAY_PLAN_CANDIDATE_PREMIUM: (process.env.RAZORPAY_PLAN_CANDIDATE_PREMIUM || "plan_TPc3dSn8XUWR2j").trim(),
 
+  // Email APIs (HTTPS Port 443 for Cloud/Render)
+  RESEND_API_KEY: (process.env.RESEND_API_KEY || "").trim(),
+  BREVO_API_KEY: (process.env.BREVO_API_KEY || "").trim(),
+
   // Polar
   POLAR_ACCESS_TOKEN: (process.env.POLAR_ACCESS_TOKEN || "").trim(),
   POLAR_SERVER_URL: (process.env.POLAR_SERVER_URL || "https://sandbox-api.polar.sh").trim(),
