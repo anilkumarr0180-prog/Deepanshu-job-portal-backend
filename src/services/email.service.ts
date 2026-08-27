@@ -1143,6 +1143,85 @@ export interface PasswordResetEmailPayload {
   expiresInMinutes?: number;
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| Dispatch Email via HTTPS REST API (Port 443 - Never Blocked by Cloud Firewalls)
+|--------------------------------------------------------------------------
+*/
+async function dispatchViaHttpApi(payload: {
+  to: string;
+  subject: string;
+  html: string;
+  from?: string;
+}): Promise<boolean> {
+  // 1. Resend API (HTTPS Port 443)
+  if (env.RESEND_API_KEY) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: env.SMTP_FROM && env.SMTP_FROM.includes("@") && !env.SMTP_FROM.includes("gmail.com")
+            ? env.SMTP_FROM
+            : "JobBox Security <onboarding@resend.dev>",
+          to: [payload.to],
+          subject: payload.subject,
+          html: payload.html,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`[HTTPS API - Resend] Email sent to ${payload.to} successfully: ${data.id}`);
+        return true;
+      } else {
+        const errText = await response.text();
+        console.warn(`[HTTPS API - Resend WARN] Failed: ${response.status} ${errText}`);
+      }
+    } catch (err: any) {
+      console.warn(`[HTTPS API - Resend ERROR] ${err?.message || err}`);
+    }
+  }
+
+  // 2. Brevo API (HTTPS Port 443)
+  if (env.BREVO_API_KEY) {
+    try {
+      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": env.BREVO_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sender: {
+            name: "JobBox Security",
+            email: env.SMTP_USER || "no-reply@jobsbox.com",
+          },
+          to: [{ email: payload.to }],
+          subject: payload.subject,
+          htmlContent: payload.html,
+        }),
+      });
+
+      if (response.ok) {
+        console.log(`[HTTPS API - Brevo] Email sent to ${payload.to} successfully`);
+        return true;
+      } else {
+        const errText = await response.text();
+        console.warn(`[HTTPS API - Brevo WARN] Failed: ${response.status} ${errText}`);
+      }
+    } catch (err: any) {
+      console.warn(`[HTTPS API - Brevo ERROR] ${err?.message || err}`);
+    }
+  }
+
+  return false;
+}
+
 export const sendPasswordResetEmail = async (
   payload: PasswordResetEmailPayload
 ): Promise<boolean> => {
@@ -1209,6 +1288,14 @@ export const sendPasswordResetEmail = async (
   `;
 
   try {
+    // Try HTTPS REST API over Port 443 first (for Render/Vercel/Cloud)
+    const sentViaHttp = await dispatchViaHttpApi({
+      to: recipientEmail,
+      subject: "Reset Your JobBox Password",
+      html,
+    });
+    if (sentViaHttp) return true;
+
     const { transporter, isTestAccount } = await getTransporter();
     const info = await transporter.sendMail({
       from,

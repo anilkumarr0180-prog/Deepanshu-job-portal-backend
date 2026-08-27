@@ -388,7 +388,7 @@ export const changePassword = async (
 | Always returns a generic 200 message to prevent user enumeration.
 |--------------------------------------------------------------------------
 */
-export const forgotPassword = async (input: { email: string }) => {
+export const forgotPassword = async (input: { email: string; origin?: string }) => {
   const normalizedEmail = input.email.trim().toLowerCase();
 
   const user = await User.findOne({
@@ -420,7 +420,8 @@ export const forgotPassword = async (input: { email: string }) => {
         expiresAt,
       });
 
-      const resetUrl = `${env.CLIENT_URL}/reset-password/${rawToken}`;
+      const clientBaseUrl = input.origin ? input.origin.replace(/\/$/, "") : env.CLIENT_URL;
+      const resetUrl = `${clientBaseUrl}/reset-password/${rawToken}`;
 
       console.log(`\n======================================================`);
       console.log(`🔑 [PASSWORD RESET LINK GENERATED FOR ${user.email}]:`);
