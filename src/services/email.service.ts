@@ -86,6 +86,151 @@ const getTransporter = async () => {
   };
 };
 
+/*
+|--------------------------------------------------------------------------
+| Dispatch Email via HTTPS REST API (Port 443 - Immune to Cloud Firewall Blocks)
+|--------------------------------------------------------------------------
+*/
+export async function dispatchViaHttpApi(payload: {
+  to: string;
+  subject: string;
+  html: string;
+  from?: string;
+}): Promise<boolean> {
+  // 1. Resend API (HTTPS Port 443)
+  if (env.RESEND_API_KEY) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from:
+            env.SMTP_FROM && env.SMTP_FROM.includes("@") && !env.SMTP_FROM.includes("gmail.com")
+              ? env.SMTP_FROM
+              : "JobBox <onboarding@resend.dev>",
+          to: [payload.to],
+          subject: payload.subject,
+          html: payload.html,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`[HTTPS API - Resend] Email sent to ${payload.to} successfully: ${data.id}`);
+        return true;
+      } else {
+        const errText = await response.text();
+        console.warn(`[HTTPS API - Resend WARN] Failed: ${response.status} ${errText}`);
+      }
+    } catch (err: any) {
+      console.warn(`[HTTPS API - Resend ERROR] ${err?.message || err}`);
+    }
+  }
+
+  // 2. Brevo API (HTTPS Port 443)
+  if (env.BREVO_API_KEY) {
+    try {
+      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": env.BREVO_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sender: {
+            name: "JobBox",
+            email: env.SMTP_USER || "no-reply@jobsbox.com",
+          },
+          to: [{ email: payload.to }],
+          subject: payload.subject,
+          htmlContent: payload.html,
+        }),
+      });
+
+      if (response.ok) {
+        console.log(`[HTTPS API - Brevo] Email sent to ${payload.to} successfully`);
+        return true;
+      } else {
+        const errText = await response.text();
+        console.warn(`[HTTPS API - Brevo WARN] Failed: ${response.status} ${errText}`);
+      }
+    } catch (err: any) {
+      console.warn(`[HTTPS API - Brevo ERROR] ${err?.message || err}`);
+    }
+  }
+
+  return false;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Unified Transactional Email Engine
+|--------------------------------------------------------------------------
+*/
+export async function sendTransactionalEmail(options: {
+  to: string;
+  subject: string;
+  html: string;
+  from?: string;
+  logLabel?: string;
+}): Promise<boolean> {
+  const from = options.from || getFromHeader();
+  const label = options.logLabel || "Transactional Email";
+
+  // 1. Try HTTPS REST API first (Port 443 - zero firewall drop on Render/Vercel)
+  const sentViaHttp = await dispatchViaHttpApi({
+    to: options.to,
+    subject: options.subject,
+    html: options.html,
+    from,
+  });
+  if (sentViaHttp) {
+    return true;
+  }
+
+  // 2. Fallback to Nodemailer SMTP (Localhost dev or custom SMTP hosts)
+  try {
+    const { transporter, isTestAccount } = await getTransporter();
+    const info = await transporter.sendMail({
+      from,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+    });
+    console.log(`[SMTP] ${label} sent to ${options.to}: ${info.messageId}`);
+    if (isTestAccount) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - ${label.toUpperCase()}]: ${previewUrl}`);
+    }
+    return true;
+  } catch (error: any) {
+    console.warn(`[SMTP WARN] Primary SMTP send for ${label} (${options.to}) failed: ${error?.message || error}. Falling back to Ethereal...`);
+    try {
+      const testAccount = await nodemailer.createTestAccount();
+      const fallbackTransporter = nodemailer.createTransport({
+        host: "smtp.ethereal.email",
+        port: 587,
+        secure: false,
+        auth: { user: testAccount.user, pass: testAccount.pass },
+      });
+      const info = await fallbackTransporter.sendMail({
+        from: '"JobsBox Security" <no-reply@jobsbox.com>',
+        to: options.to,
+        subject: options.subject,
+        html: options.html,
+      });
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[DEV EMAIL PREVIEW LINK - ${label.toUpperCase()} (FALLBACK)]: ${previewUrl}`);
+      return true;
+    } catch (fallbackErr: any) {
+      console.error(`[SMTP ERROR] Fallback transport also failed for ${label} (${options.to}):`, fallbackErr?.message || fallbackErr);
+      return false;
+    }
+  }
+}
 
 export interface ApplicantEmailPayload {
   applicantName: string;
@@ -191,44 +336,12 @@ export const sendJobApplicationApplicantEmail = async (
     </html>
   `;
 
-  try {
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: applicantEmail,
-      subject: `Application Received: ${jobTitle} at ${companyName}`,
-      html,
-    });
-    console.log(`[SMTP] Candidate notification email sent to ${applicantEmail}: ${info.messageId}`);
-    if (isTestAccount) {
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - CANDIDATE RECEIPT]: ${previewUrl}`);
-    }
-    return true;
-  } catch (error: any) {
-    console.warn(`[SMTP WARN] Primary SMTP send to candidate (${applicantEmail}) failed: ${error?.message || error}. Falling back to Ethereal...`);
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const fallbackTransporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-      const info = await fallbackTransporter.sendMail({
-        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
-        to: applicantEmail,
-        subject: `Application Received: ${jobTitle} at ${companyName}`,
-        html,
-      });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - CANDIDATE RECEIPT (ETHEREAL FALLBACK)]: ${previewUrl}`);
-      return true;
-    } catch (fallbackErr) {
-      console.error(`[SMTP ERROR] Fallback transport also failed for (${applicantEmail}):`, fallbackErr);
-      return false;
-    }
-  }
+  return sendTransactionalEmail({
+    to: applicantEmail,
+    subject: `Application Received: ${jobTitle} at ${companyName}`,
+    html,
+    logLabel: "Candidate Application Receipt",
+  });
 };
 
 
@@ -333,44 +446,12 @@ export const sendJobApplicationRecruiterEmail = async (
     </html>
   `;
 
-  try {
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: recruiterEmail,
-      subject: `New Application: ${applicantName} applied for ${jobTitle}`,
-      html,
-    });
-    console.log(`[SMTP] Recruiter notification email sent to ${recruiterEmail}: ${info.messageId}`);
-    if (isTestAccount) {
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - RECRUITER ALERT]: ${previewUrl}`);
-    }
-    return true;
-  } catch (error: any) {
-    console.warn(`[SMTP WARN] Primary SMTP send to recruiter (${recruiterEmail}) failed: ${error?.message || error}. Falling back to Ethereal...`);
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const fallbackTransporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-      const info = await fallbackTransporter.sendMail({
-        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
-        to: recruiterEmail,
-        subject: `New Application: ${applicantName} applied for ${jobTitle}`,
-        html,
-      });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - RECRUITER ALERT (ETHEREAL FALLBACK)]: ${previewUrl}`);
-      return true;
-    } catch (fallbackErr) {
-      console.error(`[SMTP ERROR] Fallback transport also failed for recruiter (${recruiterEmail}):`, fallbackErr);
-      return false;
-    }
-  }
+  return sendTransactionalEmail({
+    to: recruiterEmail,
+    subject: `New Application: ${applicantName} applied for ${jobTitle}`,
+    html,
+    logLabel: "Recruiter Application Alert",
+  });
 };
 
 /*
@@ -496,44 +577,12 @@ export const sendApplicationStatusUpdateEmail = async (
     </html>
   `;
 
-  try {
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: applicantEmail,
-      subject: `${statusHeader}: ${jobTitle} at ${companyName}`,
-      html,
-    });
-    console.log(`[SMTP] Application status update email sent to ${applicantEmail}: ${info.messageId}`);
-    if (isTestAccount) {
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - STATUS UPDATE]: ${previewUrl}`);
-    }
-    return true;
-  } catch (error: any) {
-    console.warn(`[SMTP WARN] Primary SMTP send for status update (${applicantEmail}) failed: ${error?.message || error}. Falling back to Ethereal...`);
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const fallbackTransporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-      const info = await fallbackTransporter.sendMail({
-        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
-        to: applicantEmail,
-        subject: `${statusHeader}: ${jobTitle} at ${companyName}`,
-        html,
-      });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - STATUS UPDATE (ETHEREAL FALLBACK)]: ${previewUrl}`);
-      return true;
-    } catch (fallbackErr) {
-      console.error(`[SMTP ERROR] Fallback transport also failed for status update (${applicantEmail}):`, fallbackErr);
-      return false;
-    }
-  }
+  return sendTransactionalEmail({
+    to: applicantEmail,
+    subject: `${statusHeader}: ${jobTitle} at ${companyName}`,
+    html,
+    logLabel: "Application Status Update",
+  });
 };
 
 
@@ -610,26 +659,17 @@ export const sendTestEmail = async (targetEmail: string): Promise<{ success: boo
     </div>
   `;
 
-  try {
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: targetEmail,
-      subject: "JobsBox SMTP Test Email",
-      html,
-    });
-    const previewUrl = isTestAccount ? nodemailer.getTestMessageUrl(info) : null;
-    return {
-      success: true,
-      message: `Test email sent successfully! ${previewUrl ? `(Preview URL: ${previewUrl})` : `(Message ID: ${info.messageId})`}`,
-    };
-  } catch (error: unknown) {
-    const err = error as Error;
-    return {
-      success: false,
-      message: `Failed to send test email: ${err.message}`,
-    };
-  }
+  const success = await sendTransactionalEmail({
+    to: targetEmail,
+    subject: "JobsBox SMTP Test Email",
+    html,
+    logLabel: "Admin Test Email",
+  });
+
+  return {
+    success,
+    message: success ? "Test email dispatched successfully!" : "Failed to dispatch test email. Check server logs.",
+  };
 };
 
 
@@ -703,44 +743,12 @@ export const sendUnreadMessagesEmail = async (
     </html>
   `;
 
-  try {
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: recipientEmail,
-      subject: `New message from ${senderName} regarding ${jobTitle}`,
-      html,
-    });
-    console.log(`[SMTP] Unread messages email sent to ${recipientEmail}: ${info.messageId}`);
-    if (isTestAccount) {
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - UNREAD MESSAGES]: ${previewUrl}`);
-    }
-    return true;
-  } catch (error: any) {
-    console.warn(`[SMTP WARN] Unread messages email to (${recipientEmail}) failed: ${error?.message}. Falling back to Ethereal...`);
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const fallbackTransporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-      const info = await fallbackTransporter.sendMail({
-        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
-        to: recipientEmail,
-        subject: `New message from ${senderName} regarding ${jobTitle}`,
-        html,
-      });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - UNREAD MESSAGES (FALLBACK)]: ${previewUrl}`);
-      return true;
-    } catch (fallbackErr) {
-      console.error(`[SMTP ERROR] Fallback transport also failed:`, fallbackErr);
-      return false;
-    }
-  }
+  return sendTransactionalEmail({
+    to: recipientEmail,
+    subject: `New message from ${senderName} regarding ${jobTitle}`,
+    html,
+    logLabel: "Unread Messages Alert",
+  });
 };
 
 
@@ -866,46 +874,12 @@ export const sendSubscriptionReceiptEmail = async (
     </html>
   `;
 
-  try {
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: userEmail,
-      subject: `Payment Receipt for ${planName} [#${invoiceNumber}] - JobsBox`,
-      html,
-    });
-
-    if (isTestAccount) {
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[Email Preview URL - Subscription Receipt]: ${previewUrl}`);
-    } else {
-      console.log(`[Email Sent] Subscription receipt sent to ${userEmail} (MsgID: ${info.messageId})`);
-    }
-    return true;
-  } catch (error: any) {
-    console.warn(`[SMTP NOTICE] Primary SMTP send for subscription receipt (${userEmail}) timed out/failed: ${error?.message || error}. Falling back to Ethereal...`);
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const fallbackTransporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-      const info = await fallbackTransporter.sendMail({
-        from: '"JobsBox Portal" <no-reply@jobsbox.com>',
-        to: userEmail,
-        subject: `Payment Receipt for ${planName} [#${invoiceNumber}] - JobsBox`,
-        html,
-      });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[Email Preview URL - Subscription Receipt (Fallback)]: ${previewUrl}`);
-      return true;
-    } catch (fallbackErr) {
-      console.warn(`[SMTP NOTICE] Email fallback transport skipped for (${userEmail}).`);
-      return false;
-    }
-  }
+  return sendTransactionalEmail({
+    to: userEmail,
+    subject: `Payment Receipt for ${planName} [#${invoiceNumber}] - JobsBox`,
+    html,
+    logLabel: "Subscription Receipt",
+  });
 };
 
 /*
@@ -965,20 +939,12 @@ export const sendSubscriptionExpiringSoonEmail = async (params: {
     </html>
   `;
 
-  try {
-    const { transporter } = await getTransporter();
-    await transporter.sendMail({
-      from,
-      to: userEmail,
-      subject: `Action Required: Your ${planName} subscription expires soon - JobsBox`,
-      html,
-    });
-    console.log(`[Email Sent] Expiration warning sent to ${userEmail}`);
-    return true;
-  } catch (error) {
-    console.error("Failed to send expiration warning email:", error);
-    return false;
-  }
+  return sendTransactionalEmail({
+    to: userEmail,
+    subject: `Action Required: Your ${planName} subscription expires soon - JobsBox`,
+    html,
+    logLabel: "Subscription Expiration Warning",
+  });
 };
 
 /*
@@ -1034,20 +1000,12 @@ export const sendSubscriptionExpiredEmail = async (params: {
     </html>
   `;
 
-  try {
-    const { transporter } = await getTransporter();
-    await transporter.sendMail({
-      from,
-      to: userEmail,
-      subject: `Your ${planName} subscription has expired - JobsBox`,
-      html,
-    });
-    console.log(`[Email Sent] Expiration notice sent to ${userEmail}`);
-    return true;
-  } catch (error) {
-    console.error("Failed to send subscription expired email:", error);
-    return false;
-  }
+  return sendTransactionalEmail({
+    to: userEmail,
+    subject: `Your ${planName} subscription has expired - JobsBox`,
+    html,
+    logLabel: "Subscription Expired Notice",
+  });
 };
 
 /*
@@ -1113,20 +1071,12 @@ export const sendSubscriptionRenewedEmail = async (params: {
     </html>
   `;
 
-  try {
-    const { transporter } = await getTransporter();
-    await transporter.sendMail({
-      from,
-      to: userEmail,
-      subject: `Subscription Auto-Renewed: ${planName} - JobsBox`,
-      html,
-    });
-    console.log(`[Email Sent] Auto-renewal receipt sent to ${userEmail}`);
-    return true;
-  } catch (error) {
-    console.error("Failed to send subscription renewal email:", error);
-    return false;
-  }
+  return sendTransactionalEmail({
+    to: userEmail,
+    subject: `Subscription Auto-Renewed: ${planName} - JobsBox`,
+    html,
+    logLabel: "Subscription Auto-Renewed",
+  });
 };
 
 
@@ -1143,84 +1093,6 @@ export interface PasswordResetEmailPayload {
   expiresInMinutes?: number;
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Dispatch Email via HTTPS REST API (Port 443 - Never Blocked by Cloud Firewalls)
-|--------------------------------------------------------------------------
-*/
-async function dispatchViaHttpApi(payload: {
-  to: string;
-  subject: string;
-  html: string;
-  from?: string;
-}): Promise<boolean> {
-  // 1. Resend API (HTTPS Port 443)
-  if (env.RESEND_API_KEY) {
-    try {
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: env.SMTP_FROM && env.SMTP_FROM.includes("@") && !env.SMTP_FROM.includes("gmail.com")
-            ? env.SMTP_FROM
-            : "JobBox Security <onboarding@resend.dev>",
-          to: [payload.to],
-          subject: payload.subject,
-          html: payload.html,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`[HTTPS API - Resend] Email sent to ${payload.to} successfully: ${data.id}`);
-        return true;
-      } else {
-        const errText = await response.text();
-        console.warn(`[HTTPS API - Resend WARN] Failed: ${response.status} ${errText}`);
-      }
-    } catch (err: any) {
-      console.warn(`[HTTPS API - Resend ERROR] ${err?.message || err}`);
-    }
-  }
-
-  // 2. Brevo API (HTTPS Port 443)
-  if (env.BREVO_API_KEY) {
-    try {
-      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-        method: "POST",
-        headers: {
-          "api-key": env.BREVO_API_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sender: {
-            name: "JobBox Security",
-            email: env.SMTP_USER || "no-reply@jobsbox.com",
-          },
-          to: [{ email: payload.to }],
-          subject: payload.subject,
-          htmlContent: payload.html,
-        }),
-      });
-
-      if (response.ok) {
-        console.log(`[HTTPS API - Brevo] Email sent to ${payload.to} successfully`);
-        return true;
-      } else {
-        const errText = await response.text();
-        console.warn(`[HTTPS API - Brevo WARN] Failed: ${response.status} ${errText}`);
-      }
-    } catch (err: any) {
-      console.warn(`[HTTPS API - Brevo ERROR] ${err?.message || err}`);
-    }
-  }
-
-  return false;
-}
 
 export const sendPasswordResetEmail = async (
   payload: PasswordResetEmailPayload
@@ -1287,52 +1159,12 @@ export const sendPasswordResetEmail = async (
     </html>
   `;
 
-  try {
-    // Try HTTPS REST API over Port 443 first (for Render/Vercel/Cloud)
-    const sentViaHttp = await dispatchViaHttpApi({
-      to: recipientEmail,
-      subject: "Reset Your JobBox Password",
-      html,
-    });
-    if (sentViaHttp) return true;
-
-    const { transporter, isTestAccount } = await getTransporter();
-    const info = await transporter.sendMail({
-      from,
-      to: recipientEmail,
-      subject: "Reset Your JobBox Password",
-      html,
-    });
-    console.log(`[SMTP] Password reset email sent to ${recipientEmail}: ${info.messageId}`);
-    if (isTestAccount) {
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - PASSWORD RESET]: ${previewUrl}`);
-    }
-    return true;
-  } catch (error: any) {
-    console.warn(`[SMTP WARN] Primary SMTP password reset send to (${recipientEmail}) failed: ${error?.message || error}. Falling back to Ethereal...`);
-    try {
-      const testAccount = await nodemailer.createTestAccount();
-      const fallbackTransporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
-        port: 587,
-        secure: false,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-      const info = await fallbackTransporter.sendMail({
-        from: '"JobsBox Security" <no-reply@jobsbox.com>',
-        to: recipientEmail,
-        subject: "Reset Your JobBox Password",
-        html,
-      });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      console.log(`[DEV EMAIL PREVIEW LINK - PASSWORD RESET (FALLBACK)]: ${previewUrl}`);
-      return true;
-    } catch (fallbackErr) {
-      console.error(`[SMTP ERROR] Fallback transport also failed for password reset (${recipientEmail}):`, fallbackErr);
-      return false;
-    }
-  }
+  return sendTransactionalEmail({
+    to: recipientEmail,
+    subject: "Reset Your JobBox Password",
+    html,
+    logLabel: "Password Reset Link",
+  });
 };
 
 export const sendPasswordResetSuccessEmail = async (
@@ -1379,17 +1211,10 @@ export const sendPasswordResetSuccessEmail = async (
     </html>
   `;
 
-  try {
-    const { transporter } = await getTransporter();
-    await transporter.sendMail({
-      from,
-      to: recipientEmail,
-      subject: "Your JobBox Password Was Reset Successfully",
-      html,
-    });
-    return true;
-  } catch (err) {
-    console.warn("[SMTP WARN] Failed to send password reset confirmation email:", err);
-    return false;
-  }
+  return sendTransactionalEmail({
+    to: recipientEmail,
+    subject: "Your JobBox Password Was Reset Successfully",
+    html,
+    logLabel: "Password Reset Confirmation",
+  });
 };

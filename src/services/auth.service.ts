@@ -489,7 +489,7 @@ export const resetPassword = async (rawToken: string, newPassword: string) => {
   const hashedPassword = await hashPassword(newPassword);
 
   user.password = hashedPassword;
-  if (user.authProvider === "google" && !user.password) {
+  if (user.authProvider === "google") {
     user.authProvider = "local";
   }
   await user.save();
