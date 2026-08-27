@@ -18,35 +18,56 @@ const getFromHeader = () => {
   return `"JobsBox Portal" <${emailAddr}>`;
 };
 
+let cachedTransporter: nodemailer.Transporter | null = null;
+
 const getTransporter = async () => {
   const user = env.SMTP_USER;
   const pass = env.SMTP_PASS;
-  const host = env.SMTP_HOST || "smtp.gmail.com";
-  const port = env.SMTP_PORT || 587;
-  const secure = env.SMTP_SECURE || false;
 
   if (user && pass) {
+    if (cachedTransporter) {
+      return {
+        transporter: cachedTransporter,
+        isTestAccount: false,
+      };
+    }
+
+    const host = env.SMTP_HOST || "smtp.gmail.com";
     const isGmail = host.includes("gmail") || user.endsWith("@gmail.com");
-    const transportConfig = {
-      host: isGmail ? "smtp.gmail.com" : host,
-      port: isGmail ? 587 : port,
-      secure: false, // TLS via STARTTLS on 587
-      requireTLS: true,
-      auth: { user, pass },
-      tls: { rejectUnauthorized: false },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-    };
+
+    if (isGmail) {
+      cachedTransporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user, pass },
+        pool: true,
+        maxConnections: 5,
+        maxMessages: 100,
+        rateLimit: 10,
+        connectionTimeout: 5000,
+        greetingTimeout: 5000,
+        socketTimeout: 5000,
+      });
+    } else {
+      const port = env.SMTP_PORT || 465;
+      const secure = port === 465 || env.SMTP_SECURE;
+      cachedTransporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: { user, pass },
+        pool: true,
+        maxConnections: 5,
+        tls: { rejectUnauthorized: false },
+      });
+    }
 
     return {
-      transporter: nodemailer.createTransport(transportConfig),
+      transporter: cachedTransporter,
       isTestAccount: false,
     };
   }
 
-
-  // Fallback to Ethereal Test Account when EMAIL_USER/EMAIL_PASS is empty
+  // Fallback to Ethereal Test Account ONLY if no credentials in server/.env
   console.warn(
     "[SMTP NOTICE] EMAIL_USER / EMAIL_PASS is empty in server/.env. Generating an Ethereal Test Account for email preview links."
   );
