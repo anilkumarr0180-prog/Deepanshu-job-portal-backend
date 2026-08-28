@@ -356,15 +356,27 @@ export const getConversationMessages = async (
 export const createMessage = async (
   conversationId: string,
   senderId: string,
-  messageText: string,
+  messageText: string = "",
   messageType: MessageType = "text",
   attachments: IMessageAttachment[] = []
 ): Promise<IMessage> => {
-  if (!messageText || !messageText.trim()) {
+  let content = (messageText || "").trim();
+
+  // If voice message, provide safe fallback text if empty
+  if (messageType === "voice") {
+    if (!attachments || attachments.length === 0 || !attachments[0]?.url) {
+      throw new AppError("Voice messages require an audio attachment.", HTTP_STATUS.BAD_REQUEST);
+    }
+    if (!content) {
+      content = "🎤 Voice message";
+    }
+  }
+
+  if (!content) {
     throw new AppError("Message content cannot be empty.", HTTP_STATUS.BAD_REQUEST);
   }
 
-  if (messageText.length > 5000) {
+  if (content.length > 5000) {
     throw new AppError("Message content exceeds limit of 5000 characters.", HTTP_STATUS.BAD_REQUEST);
   }
 
@@ -390,7 +402,7 @@ export const createMessage = async (
   const message = await Message.create({
     conversationId: convObjId,
     senderId: senderObjId,
-    message: messageText.trim(),
+    message: content,
     messageType,
     attachments,
     isRead: false,
@@ -543,6 +555,10 @@ export const editMessage = async (
 
   if (message.senderId.toString() !== userId) {
     throw new AppError("You can only edit your own messages.", HTTP_STATUS.FORBIDDEN);
+  }
+
+  if (message.messageType === "voice") {
+    throw new AppError("Voice messages cannot be edited.", HTTP_STATUS.BAD_REQUEST);
   }
 
   message.message = newText.trim();

@@ -23,6 +23,7 @@ import callRoutes from "./routes/call.routes";
 import locationRoutes from "./routes/location.routes";
 import subscriptionRoutes from "./routes/subscription.routes";
 import uploadRoutes from "./routes/upload.routes";
+import interviewRoutes from "./routes/interview.routes";
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -36,6 +37,14 @@ export const allowedOrigins = [
   "https://deepanshu-job-portal-frontend-five.vercel.app",
   "http://localhost:5173",
   "http://localhost:5174",
+  "http://localhost:5175",
+  "http://localhost:5176",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+  "http://127.0.0.1:5175",
+  "http://127.0.0.1:5176",
+  "http://127.0.0.1:3000",
   ...(process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
     : []),
@@ -46,11 +55,21 @@ app.use(helmet());
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) {
         return callback(null, true);
       }
 
-      callback(new Error("Not allowed by CORS"));
+      const isAllowed =
+        allowedOrigins.includes(origin) ||
+        (process.env.NODE_ENV !== "production" &&
+          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin));
+
+      if (isAllowed) {
+        return callback(null, true);
+      }
+
+      // Deny CORS cleanly without throwing an unhandled server error
+      callback(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -114,10 +133,12 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/call", callRoutes);
+app.use("/api/calls", callRoutes);
 app.use("/api/location", locationRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/v1/subscriptions", subscriptionRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/interviews", interviewRoutes);
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);

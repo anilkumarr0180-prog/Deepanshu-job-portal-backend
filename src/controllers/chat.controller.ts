@@ -136,15 +136,19 @@ export const sendMessageController = asyncHandler(
 
       const conversation = await Conversation.findById(conversationId).lean();
       if (conversation) {
-        const recipientId =
-          conversation.candidateId.toString() === userId
-            ? conversation.recruiterId.toString()
-            : conversation.candidateId.toString();
+        const candidateIdStr = conversation.candidateId.toString();
+        const recruiterIdStr = conversation.recruiterId.toString();
+        const recipientId = candidateIdStr === userId ? recruiterIdStr : candidateIdStr;
 
         const recipientRoom = `user_${recipientId}`;
+        const senderRoom = `user_${userId}`;
         const unreadTotal = await chatService.getUnreadChatCount(recipientId);
 
         io.to(recipientRoom).emit("message_received", {
+          message: newMessage,
+          conversationId,
+        });
+        io.to(senderRoom).emit("message_received", {
           message: newMessage,
           conversationId,
         });
@@ -153,6 +157,10 @@ export const sendMessageController = asyncHandler(
           conversationId,
           lastMessage: newMessage,
           unreadTotal,
+        });
+        io.to(senderRoom).emit("conversation_updated", {
+          conversationId,
+          lastMessage: newMessage,
         });
       }
     } catch {

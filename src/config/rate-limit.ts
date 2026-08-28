@@ -15,7 +15,7 @@ import rateLimit from "express-rate-limit";
  */
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: process.env.NODE_ENV === "production" ? 15 : 1000,
   standardHeaders: true, // Return rate-limit info in RateLimit-* headers
   legacyHeaders: false, // Disable X-RateLimit-* legacy headers
   handler: (_req, res) => {
@@ -25,17 +25,17 @@ export const authRateLimiter = rateLimit({
       errors: [],
     });
   },
-  skip: () => process.env.NODE_ENV === "test", // Don't rate-limit during tests
+  skip: () => process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development",
 });
 
 /**
  * General API limiter for all other routes.
  * Prevents scraping and general abuse.
- * 200 requests per 15 minutes per IP.
+ * 200 requests per 15 minutes per IP in production.
  */
 export const generalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: process.env.NODE_ENV === "production" ? 300 : 5000,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req, res) => {
@@ -45,5 +45,5 @@ export const generalRateLimiter = rateLimit({
       errors: [],
     });
   },
-  skip: () => process.env.NODE_ENV === "test",
+  skip: () => process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development",
 });

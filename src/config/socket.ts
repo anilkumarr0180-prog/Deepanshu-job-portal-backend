@@ -190,27 +190,36 @@ export const initSocketServer = (
             conversationId,
           });
 
-          // Fetch updated conversation to notify recipient user room
+          // Fetch conversation to notify both participant user rooms
           const conversation = await Conversation.findById(conversationId).lean();
           if (conversation) {
-            const recipientId =
-              conversation.candidateId.toString() === userId
-                ? conversation.recruiterId.toString()
-                : conversation.candidateId.toString();
+            const candidateIdStr = conversation.candidateId.toString();
+            const recruiterIdStr = conversation.recruiterId.toString();
+            const recipientId = candidateIdStr === userId ? recruiterIdStr : candidateIdStr;
 
             const recipientRoom = `user_${recipientId}`;
+            const senderRoom = `user_${userId}`;
             const unreadTotal = await chatService.getUnreadChatCount(recipientId);
 
-            // Emit message_received to recipient private user room to guarantee real-time delivery
+            // Emit message_received to both user rooms (guarantees delivery across all tabs/pages)
             io?.to(recipientRoom).emit("message_received", {
               message: createdMessage,
               conversationId,
             });
+            io?.to(senderRoom).emit("message_received", {
+              message: createdMessage,
+              conversationId,
+            });
 
+            // Emit conversation_updated to update sidebar previews for both users
             io?.to(recipientRoom).emit("conversation_updated", {
               conversationId,
               lastMessage: createdMessage,
               unreadTotal,
+            });
+            io?.to(senderRoom).emit("conversation_updated", {
+              conversationId,
+              lastMessage: createdMessage,
             });
           }
         } catch (err: unknown) {
@@ -282,7 +291,7 @@ export const initSocketServer = (
           if (!conversationId || !messageId) return;
 
           const deletedMessage = await chatService.deleteMessage(messageId, userId, deleteForEveryone);
-          
+
           if (deleteForEveryone) {
             // Mask content for broadcasting
             const maskedMessage = {
@@ -291,7 +300,7 @@ export const initSocketServer = (
               attachments: [],
               messageType: "system",
             };
-            
+
             const convRoom = `conversation_${conversationId}`;
             io?.to(convRoom).emit("message_deleted", {
               message: maskedMessage,
@@ -394,7 +403,7 @@ export const initSocketServer = (
     | Disconnect Handler
     |--------------------------------------------------------------------------
     */
-    
+
     /*
     |--------------------------------------------------------------------------
     | ATS Real-Time Kanban Synchronization Handlers
