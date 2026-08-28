@@ -6,6 +6,7 @@ import Conversation from "../models/conversation.model";
 import * as chatService from "../services/chat.service";
 import * as locationService from "../services/location.service";
 import { LocationPrivacyLevel, LOCATION_CONFIG } from "../constants/location";
+import { registerCallHandlers, handleCallDisconnect } from "../socket/call.handler";
 
 export interface AuthenticatedSocket extends Socket {
   user?: {
@@ -97,6 +98,11 @@ export const initSocketServer = (
     io?.emit("online_users", currentOnlineList);
 
     console.log(`⚡ Socket client connected: ${socket.id} (User: ${userId}, Room: ${userRoom})`);
+
+    // Register 1-to-1 audio call signaling handlers
+    if (io) {
+      registerCallHandlers(io, socket);
+    }
 
     /*
     |--------------------------------------------------------------------------
@@ -477,6 +483,11 @@ export const initSocketServer = (
         if (userSockets.size === 0) {
           onlineUsersMap.delete(userId);
         }
+      }
+
+      // Clean up any active call session if this user was participating
+      if (io) {
+        handleCallDisconnect(io, socket);
       }
 
       // Broadcast updated online user list
