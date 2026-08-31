@@ -5,7 +5,8 @@ export type CallStatus =
   | "cancelled"
   | "declined"
   | "busy"
-  | "missed";
+  | "missed"
+  | "failed";
 
 export interface CallParticipant {
   userId: string;
@@ -71,3 +72,49 @@ export interface CallFailedData {
   reason?: string;
   message?: string;
 }
+
+/*
+|--------------------------------------------------------------------------
+| Persistence & Query Types
+|--------------------------------------------------------------------------
+*/
+
+export interface SaveCallTerminalInput {
+  callId: string;
+  conversationId: string;
+  callerId: string;
+  receiverId: string;
+  status: CallStatus;
+  startedAt: Date;
+  acceptedAt?: Date | null;
+  endedAt?: Date | null;
+  endReason?: string;
+}
+
+export interface CallHistoryFilterQuery {
+  page?: string;
+  limit?: string;
+  conversationId?: string;
+  status?: CallStatus;
+}
+
+export interface CallHistoryEventPayload {
+  _id: string;
+  id: string;
+  callId: string;
+  conversationId: string;
+  callerId: string;
+  receiverId: string;
+  status: CallStatus;
+  startedAt: Date;
+  answeredAt: Date | null;
+  endedAt: Date | null;
+  durationSeconds: number;
+  endReason?: string;
+  createdAt: Date;
+}
+
+export interface CallMissedCountEventPayload {
+  unreadMissedCallCount: number;
+}
+

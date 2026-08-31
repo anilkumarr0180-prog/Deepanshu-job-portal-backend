@@ -93,6 +93,23 @@ export const generateUploadSignature = (
   }
 
   // -------------------------------------------------------------------------
+  // Chat media
+  // Candidate, Recruiter, Admin
+  // -------------------------------------------------------------------------
+
+  if (
+    type === "chat-media" &&
+    role !== USER_ROLES.CANDIDATE &&
+    role !== USER_ROLES.RECRUITER &&
+    role !== USER_ROLES.ADMIN
+  ) {
+    throw new AppError(
+      "You are not authorized to upload chat media.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Generate Cloudinary signature
   // -------------------------------------------------------------------------
 

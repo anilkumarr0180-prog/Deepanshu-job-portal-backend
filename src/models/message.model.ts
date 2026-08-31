@@ -1,6 +1,6 @@
 import { Schema, model, Document, Types } from "mongoose";
 
-export type MessageType = "text" | "image" | "file" | "system";
+export type MessageType = "text" | "image" | "file" | "system" | "voice";
 
 export interface IMessageAttachment {
   url: string;
@@ -48,7 +48,7 @@ const messageSchema = new Schema<IMessage>(
 
     messageType: {
       type: String,
-      enum: ["text", "image", "file", "system"],
+      enum: ["text", "image", "file", "system", "voice"],
       default: "text",
     },
 

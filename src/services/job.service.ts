@@ -60,20 +60,28 @@ export const resolveSkills = async (
   skillNames: string[]
 ): Promise<{ skillIds: Types.ObjectId[]; skills: string[] }> => {
   const Skill = (await import("../models/skill.model")).default;
-  const uniqueNames = Array.from(
-    new Set(skillNames.map((s) => s.trim()).filter(Boolean))
-  );
+  const seenSlugs = new Set<string>();
+  const uniqueItems: { name: string; slug: string }[] = [];
 
-  const skillIds: Types.ObjectId[] = [];
-  const skills: string[] = [];
-
-  for (const name of uniqueNames) {
+  for (const rawName of skillNames) {
+    const name = rawName.trim();
+    if (!name) continue;
     const slug =
       name
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "") || "skill";
 
+    if (!seenSlugs.has(slug)) {
+      seenSlugs.add(slug);
+      uniqueItems.push({ name, slug });
+    }
+  }
+
+  const skillIds: Types.ObjectId[] = [];
+  const skills: string[] = [];
+
+  for (const { name, slug } of uniqueItems) {
     let skill = await Skill.findOne({ slug });
     if (!skill) {
       try {

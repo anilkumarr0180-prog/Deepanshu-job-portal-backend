@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import {
   applyForJob,
+  quickApply,
   getMyApplications,
   getJobApplications,
   getRecruiterApplications,
@@ -16,6 +17,8 @@ import { validate } from "../middleware/validation.middleware";
 
 import {
   applyJobSchema,
+  quickApplySchema,
+  quickApplyParamSchema,
   getJobApplicationsSchema,
   updateApplicationStatusSchema,
   getApplicationHistorySchema,
@@ -39,6 +42,28 @@ router.post(
   authorize(USER_ROLES.CANDIDATE),
   validate(applyJobSchema),
   applyForJob
+);
+
+/*
+|--------------------------------------------------------------------------
+| Quick Apply For Job
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/applications/quick-apply",
+  authMiddleware,
+  authorize(USER_ROLES.CANDIDATE),
+  validate(quickApplySchema),
+  quickApply
+);
+
+router.post(
+  "/jobs/:id/quick-apply",
+  authMiddleware,
+  authorize(USER_ROLES.CANDIDATE),
+  validate(quickApplyParamSchema),
+  quickApply
 );
 
 /*

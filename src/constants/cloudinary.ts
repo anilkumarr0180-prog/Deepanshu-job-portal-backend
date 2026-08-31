@@ -14,11 +14,13 @@ export type CloudinaryUploadType =
   | "profile"
   | "company-logo"
   | "resume"
-  | "post";
+  | "post"
+  | "chat-media";
 
 export const CLOUDINARY_FOLDERS: Record<CloudinaryUploadType, string> = {
   profile: `${CLOUDINARY_ROOT_FOLDER}/profiles`,
   "company-logo": `${CLOUDINARY_ROOT_FOLDER}/company-logos`,
   resume: `${CLOUDINARY_ROOT_FOLDER}/resumes`,
   post: `${CLOUDINARY_ROOT_FOLDER}/posts`,
+  "chat-media": `${CLOUDINARY_ROOT_FOLDER}/chat-media`,
 } as const;

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const uploadSignatureSchema = z.object({
   body: z.object({
-    type: z.enum(["profile", "company-logo", "resume", "post"]),
+    type: z.enum(["profile", "company-logo", "resume", "post", "chat-media"]),
   }),
 });
 
@@ -23,4 +23,4 @@ export type UploadSignatureInput = z.infer<
 >;
 export type AuthenticatedResumeUrlInput = z.infer<
   typeof authenticatedResumeUrlSchema
->;
+>;

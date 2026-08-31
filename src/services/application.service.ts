@@ -381,6 +381,337 @@ export const applyForJob = async (
 
 /*
 |--------------------------------------------------------------------------
+| Quick Apply For Job (Automated Candidate Profile Snapshot)
+|--------------------------------------------------------------------------
+*/
+
+export const quickApply = async (
+  applicantId: string,
+  input: { jobId: string; coverLetter?: string }
+) => {
+  const { jobId, coverLetter } = input;
+
+  /* -------------------------------------------------------------------------- */
+  /* Check Job Exists & Is Not Deleted                                         */
+  /* -------------------------------------------------------------------------- */
+
+  const job = await Job.findOne({ _id: jobId, isDeleted: false });
+
+  if (!job) {
+    throw new AppError(
+      "Job not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Job Status & Expiry Check                                                  */
+  /* -------------------------------------------------------------------------- */
+
+  if (job.status !== JOB_STATUS.ACTIVE) {
+    throw new AppError(
+      "This job is not accepting applications.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
+    throw new AppError(
+      "This job listing has expired.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Check Recruiter Account Is Active & Not Blocked                           */
+  /* -------------------------------------------------------------------------- */
+
+  const recruiterUser = await User.findById(job.recruiterId)
+    .select("name email isBlocked status")
+    .lean();
+
+  if (!recruiterUser || (recruiterUser as any).isBlocked) {
+    throw new AppError(
+      "This job posting is no longer available.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Check Company Verification                                                  */
+  /* -------------------------------------------------------------------------- */
+
+  const Company = (await import("../models/company.model")).default;
+  let company = null;
+  if (job.companyId) {
+    company = await Company.findOne({ _id: job.companyId, isDeleted: false });
+  }
+  if (!company && job.recruiterId) {
+    company = await Company.findOne({
+      recruiterId: job.recruiterId,
+      isDeleted: false,
+    });
+  }
+
+  if (company && company.isVerified === false) {
+    throw new AppError(
+      "This company is not accepting applications.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Prevent Self Application & Company Team Application                         */
+  /* -------------------------------------------------------------------------- */
+
+  if (job.recruiterId.toString() === applicantId) {
+    throw new AppError(
+      "Recruiters cannot apply to their own jobs.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  if (job.companyId) {
+    const RecruiterProfile = (
+      await import("../models/recruiter-profile.model")
+    ).default;
+    const CompanyRecruiter = (
+      await import("../models/company-recruiter.model")
+    ).default;
+    const applicantRecruiterProfile = await RecruiterProfile.findOne({
+      userId: applicantId,
+    });
+    if (applicantRecruiterProfile) {
+      const isCompanyMember = await CompanyRecruiter.findOne({
+        companyId: job.companyId,
+        recruiterProfileId: applicantRecruiterProfile._id,
+        isDeleted: false,
+      });
+      if (isCompanyMember) {
+        throw new AppError(
+          "Company team members cannot apply to their own company's jobs.",
+          HTTP_STATUS.FORBIDDEN
+        );
+      }
+    }
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Check Candidate Exists & Is Not Blocked                                    */
+  /* -------------------------------------------------------------------------- */
+
+  const candidate = await User.findById(applicantId).select(
+    "name email phone resumeUrl isBlocked"
+  );
+
+  if (!candidate) {
+    throw new AppError(
+      "User not found.",
+      HTTP_STATUS.NOT_FOUND
+    );
+  }
+
+  if (candidate.isBlocked) {
+    throw new AppError(
+      "Your account has been blocked.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Candidate Profile & Resume Check (Snapshot Source of Truth)                 */
+  /* -------------------------------------------------------------------------- */
+
+  let candidateProfile = await CandidateProfile.findOne({
+    userId: applicantId,
+  });
+
+  if (!candidateProfile) {
+    candidateProfile = await CandidateProfile.create({
+      userId: applicantId,
+    });
+  }
+
+  const activeResumeUrl = candidateProfile?.resumeUrl || candidate.resumeUrl;
+  const activeResumePublicId = candidateProfile?.resumePublicId;
+  const activeResumeFileName =
+    candidateProfile?.resumeFileName || "Resume.pdf";
+
+  if (!activeResumeUrl) {
+    throw new AppError(
+      "Please upload a resume to your profile before using Quick Apply.",
+      HTTP_STATUS.BAD_REQUEST
+    );
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Check / Revive Existing Application or Insert with Race Protection          */
+  /* -------------------------------------------------------------------------- */
+
+  let application = await Application.findOne({
+    jobId,
+    applicantId,
+  });
+
+  if (application) {
+    if (!application.isDeleted) {
+      throw new AppError(
+        "You have already applied for this job.",
+        HTTP_STATUS.CONFLICT
+      );
+    }
+
+    // Candidate previously withdrew; revive application with candidate profile snapshot
+    application.isDeleted = false;
+    application.candidateProfileId = candidateProfile._id;
+    application.applicantName = candidate.name;
+    application.applicantEmail = candidate.email;
+    application.applicantPhone =
+      candidateProfile?.phone || (candidate as any).phone || "";
+    application.applicantDesignation = candidateProfile?.headline || "";
+    application.experienceYears = candidateProfile?.experience?.length || 0;
+    application.relevantSkills = candidateProfile?.skills || [];
+    application.noticePeriod = "Immediate";
+    application.resume = activeResumeUrl;
+    application.resumePublicId = activeResumePublicId;
+    application.resumeFileName = activeResumeFileName;
+    application.coverLetter = coverLetter?.trim() || undefined;
+    application.status = APPLICATION_STATUS.APPLIED;
+    application.interviewDetails = undefined;
+    await application.save();
+  } else {
+    try {
+      application = await Application.create({
+        jobId,
+        applicantId,
+        candidateProfileId: candidateProfile._id,
+        applicantName: candidate.name,
+        applicantEmail: candidate.email,
+        applicantPhone:
+          candidateProfile?.phone || (candidate as any).phone || "",
+        applicantDesignation: candidateProfile?.headline || "",
+        experienceYears: candidateProfile?.experience?.length || 0,
+        relevantSkills: candidateProfile?.skills || [],
+        noticePeriod: "Immediate",
+        resume: activeResumeUrl,
+        resumePublicId: activeResumePublicId,
+        resumeFileName: activeResumeFileName,
+        coverLetter: coverLetter?.trim() || undefined,
+        status: APPLICATION_STATUS.APPLIED,
+        isDeleted: false,
+      });
+    } catch (err: any) {
+      if (
+        err.code === 11000 ||
+        err.name === "MongoServerError" ||
+        err.message?.includes("E11000")
+      ) {
+        throw new AppError(
+          "You have already applied for this job.",
+          HTTP_STATUS.CONFLICT
+        );
+      }
+      throw err;
+    }
+  }
+
+  await application.populate({
+    path: "jobId",
+    select:
+      "title company location salaryMin salaryMax employmentType experienceLevel status skills",
+  });
+
+  try {
+    const companyName = company?.name || job.company || "JobsBox Partner";
+
+    // Candidate real-time notification
+    await createNotification({
+      recipientId: applicantId,
+      senderId: job.recruiterId?.toString() || null,
+      type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+      title: "Quick Application Submitted 🎉",
+      body: `You have successfully applied for "${job.title}" at ${companyName} using Quick Apply.`,
+      link: `/candidate/applied`,
+      metadata: {
+        jobId: job._id.toString(),
+        applicationId: application._id.toString(),
+        method: "quick_apply",
+      },
+    });
+
+    // Recruiter real-time notification
+    if (job.recruiterId) {
+      await createNotification({
+        recipientId: job.recruiterId.toString(),
+        senderId: applicantId,
+        type: NOTIFICATION_TYPES.APPLICATION_UPDATE,
+        title: "New Job Application Received",
+        body: `A new candidate submitted an application for "${job.title}".`,
+        link: `/recruiter/applicants`,
+        metadata: {
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+          method: "quick_apply",
+        },
+      });
+    }
+  } catch (err) {
+    console.error("Failed to send real-time notification on quick apply:", err);
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* Dispatch SMTP Email Notifications                                           */
+  /* -------------------------------------------------------------------------- */
+
+  try {
+    const companyName = company?.name || job.company || "JobsBox Partner";
+    const emailPromises: Promise<any>[] = [];
+
+    if (candidate.email) {
+      emailPromises.push(
+        sendJobApplicationApplicantEmail({
+          applicantName: candidate.name || "Candidate",
+          applicantEmail: candidate.email,
+          jobTitle: job.title,
+          companyName,
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+        })
+      );
+    }
+
+    if (recruiterUser?.email) {
+      emailPromises.push(
+        sendJobApplicationRecruiterEmail({
+          recruiterName: recruiterUser.name || "Recruiter",
+          recruiterEmail: recruiterUser.email,
+          applicantName: candidate.name || "Candidate",
+          applicantEmail: candidate.email || "",
+          jobTitle: job.title,
+          companyName,
+          coverLetter: coverLetter?.trim() || undefined,
+          resumeUrl: activeResumeUrl,
+          jobId: job._id.toString(),
+          applicationId: application._id.toString(),
+        })
+      );
+    }
+
+    void Promise.allSettled(emailPromises).catch((err) => {
+      console.error(
+        "Failed to dispatch quick application emails via SMTP:",
+        err
+      );
+    });
+  } catch (err) {
+    console.error("Failed to prepare quick application emails:", err);
+  }
+
+  return application;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Get My Applications
 |--------------------------------------------------------------------------
 */

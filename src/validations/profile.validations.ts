@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { Types } from "mongoose";
+import { EMPLOYMENT_TYPE } from "../constants/employment-type";
+import { EXPERIENCE_LEVEL } from "../constants/experience-level";
 
 const urlSchema = z
   .string()
@@ -10,6 +12,84 @@ const urlSchema = z
 
 const objectIdSchema = z.string().refine((val) => Types.ObjectId.isValid(val), {
   message: "Invalid ObjectId format.",
+});
+
+export const jobPreferencesSchema = z.object({
+  preferredRoles: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, "Role title cannot be empty.")
+        .max(100, "Role title cannot exceed 100 characters.")
+    )
+    .max(30, "Cannot specify more than 30 preferred roles.")
+    .optional(),
+
+  preferredSkills: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, "Skill cannot be empty.")
+        .max(100, "Skill name cannot exceed 100 characters.")
+    )
+    .max(50, "Cannot specify more than 50 preferred skills.")
+    .optional(),
+
+  preferredSkillIds: z
+    .array(objectIdSchema)
+    .max(50, "Cannot specify more than 50 preferred skill IDs.")
+    .optional(),
+
+  preferredLocations: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, "Location cannot be empty.")
+        .max(100, "Location cannot exceed 100 characters.")
+    )
+    .max(30, "Cannot specify more than 30 preferred locations.")
+    .optional(),
+
+  workMode: z
+    .enum(["onsite", "remote", "hybrid"])
+    .nullable()
+    .optional()
+    .or(z.literal("")),
+
+  employmentType: z
+    .enum(Object.values(EMPLOYMENT_TYPE) as [string, ...string[]])
+    .nullable()
+    .optional()
+    .or(z.literal("")),
+
+  experienceLevel: z
+    .enum(Object.values(EXPERIENCE_LEVEL) as [string, ...string[]])
+    .nullable()
+    .optional()
+    .or(z.literal("")),
+
+  minSalary: z
+    .number()
+    .min(0, "Minimum salary must be non-negative.")
+    .max(1000000000, "Minimum salary exceeds allowable maximum.")
+    .nullable()
+    .optional(),
+
+  currency: z
+    .string()
+    .trim()
+    .max(10, "Currency code cannot exceed 10 characters.")
+    .optional()
+    .or(z.literal("")),
+
+  salaryPeriod: z
+    .enum(["yearly", "monthly", "hourly"])
+    .nullable()
+    .optional()
+    .or(z.literal("")),
 });
 
 export const updateProfileSchema = z.object({
@@ -89,5 +169,7 @@ export const updateProfileSchema = z.object({
         website: urlSchema,
       })
       .optional(),
+
+    jobPreferences: jobPreferencesSchema.optional(),
   }),
-});
+});
