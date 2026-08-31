@@ -1,4 +1,12 @@
 import { Schema, model, Document, Types } from "mongoose";
+import {
+  EMPLOYMENT_TYPE,
+  EmploymentType,
+} from "../constants/employment-type";
+import {
+  EXPERIENCE_LEVEL,
+  ExperienceLevel,
+} from "../constants/experience-level";
 
 export interface ICandidateSocialLinks {
   linkedin?: string;
@@ -26,6 +34,19 @@ export interface ICandidateEducation {
   current?: boolean;
 }
 
+export interface ICandidateJobPreferences {
+  preferredRoles: string[];
+  preferredSkills: string[];
+  preferredSkillIds: Types.ObjectId[];
+  preferredLocations: string[];
+  workMode?: "onsite" | "remote" | "hybrid" | null;
+  employmentType?: EmploymentType | null;
+  experienceLevel?: ExperienceLevel | null;
+  minSalary?: number | null;
+  currency?: string | null;
+  salaryPeriod?: "yearly" | "monthly" | "hourly" | null;
+}
+
 export interface ICandidateProfile extends Document {
   userId: Types.ObjectId;
   headline?: string;
@@ -44,6 +65,7 @@ export interface ICandidateProfile extends Document {
   state?: string;
   country?: string;
   socialLinks?: ICandidateSocialLinks;
+  jobPreferences?: ICandidateJobPreferences;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -155,6 +177,42 @@ const candidateProfileSchema = new Schema<ICandidateProfile>(
       github: { type: String, trim: true },
       portfolio: { type: String, trim: true },
       twitter: { type: String, trim: true },
+    },
+    jobPreferences: {
+      preferredRoles: [{ type: String, trim: true }],
+      preferredSkills: [{ type: String, trim: true }],
+      preferredSkillIds: [{ type: Schema.Types.ObjectId, ref: "Skill" }],
+      preferredLocations: [{ type: String, trim: true }],
+      workMode: {
+        type: String,
+        enum: ["onsite", "remote", "hybrid", null],
+        default: null,
+      },
+      employmentType: {
+        type: String,
+        enum: [...Object.values(EMPLOYMENT_TYPE), null],
+        default: null,
+      },
+      experienceLevel: {
+        type: String,
+        enum: [...Object.values(EXPERIENCE_LEVEL), null],
+        default: null,
+      },
+      minSalary: {
+        type: Number,
+        min: 0,
+        default: null,
+      },
+      currency: {
+        type: String,
+        trim: true,
+        default: "USD",
+      },
+      salaryPeriod: {
+        type: String,
+        enum: ["yearly", "monthly", "hourly", null],
+        default: "yearly",
+      },
     },
     isDeleted: {
       type: Boolean,

@@ -54,6 +54,34 @@ export const applyJobSchema = z.object({
   }),
 });
 
+export const quickApplySchema = z.object({
+  body: z.object({
+    jobId: z
+      .string()
+      .regex(/^[0-9a-fA-F]{24}$/, "Invalid job id."),
+    coverLetter: z
+      .string()
+      .trim()
+      .max(5000, "Cover letter cannot exceed 5000 characters.")
+      .optional(),
+  }),
+});
+
+export const quickApplyParamSchema = z.object({
+  params: z.object({
+    id: z.string().regex(/^[0-9a-fA-F]{24}$/, "Invalid job id."),
+  }),
+  body: z
+    .object({
+      coverLetter: z
+        .string()
+        .trim()
+        .max(5000, "Cover letter cannot exceed 5000 characters.")
+        .optional(),
+    })
+    .optional(),
+});
+
 export const getJobApplicationsSchema = z.object({
   params: z.object({
     id: z.string().regex(

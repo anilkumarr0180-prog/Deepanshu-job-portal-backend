@@ -3,6 +3,7 @@ import CandidateProfile, {
   ICandidateExperience,
   ICandidateEducation,
   ICandidateSocialLinks,
+  ICandidateJobPreferences,
 } from "../models/candidate-profile.model";
 import RecruiterProfile, {
   IRecruiterSocialLinks,
@@ -13,6 +14,22 @@ import { HTTP_STATUS } from "../constants/http-status";
 import { sanitizeUser } from "../utils/sanitize-user";
 import { Types } from "mongoose";
 import cloudinaryService from "./cloudinary.service";
+import { resolveSkills } from "./job.service";
+import { EmploymentType } from "../constants/employment-type";
+import { ExperienceLevel } from "../constants/experience-level";
+
+interface UpdateJobPreferencesInput {
+  preferredRoles?: string[];
+  preferredSkills?: string[];
+  preferredSkillIds?: string[];
+  preferredLocations?: string[];
+  workMode?: "onsite" | "remote" | "hybrid" | null | "";
+  employmentType?: EmploymentType | null | "";
+  experienceLevel?: ExperienceLevel | null | "";
+  minSalary?: number | null;
+  currency?: string | null;
+  salaryPeriod?: "yearly" | "monthly" | "hourly" | null | "";
+}
 
 interface UpdateProfileInput {
   name?: string;
@@ -35,6 +52,7 @@ interface UpdateProfileInput {
   designation?: string;
   department?: string;
   companyId?: string;
+  jobPreferences?: UpdateJobPreferencesInput;
 }
 
 export const getProfile = async (userId: string) => {
@@ -103,6 +121,31 @@ export const getProfile = async (userId: string) => {
     state: profile.state,
     country: profile.country,
     socialLinks: profile.socialLinks,
+    jobPreferences: profile.jobPreferences
+      ? {
+          preferredRoles: profile.jobPreferences.preferredRoles || [],
+          preferredSkills: profile.jobPreferences.preferredSkills || [],
+          preferredSkillIds: profile.jobPreferences.preferredSkillIds || [],
+          preferredLocations: profile.jobPreferences.preferredLocations || [],
+          workMode: profile.jobPreferences.workMode || null,
+          employmentType: profile.jobPreferences.employmentType || null,
+          experienceLevel: profile.jobPreferences.experienceLevel || null,
+          minSalary: profile.jobPreferences.minSalary ?? null,
+          currency: profile.jobPreferences.currency || "USD",
+          salaryPeriod: profile.jobPreferences.salaryPeriod || "yearly",
+        }
+      : {
+          preferredRoles: [],
+          preferredSkills: [],
+          preferredSkillIds: [],
+          preferredLocations: [],
+          workMode: null,
+          employmentType: null,
+          experienceLevel: null,
+          minSalary: null,
+          currency: "USD",
+          salaryPeriod: "yearly",
+        },
   };
 };
 
@@ -244,6 +287,89 @@ export const updateProfile = async (
       profile.country = profileData.country;
     if (profileData.socialLinks !== undefined)
       profile.socialLinks = profileData.socialLinks;
+
+    if (profileData.jobPreferences !== undefined) {
+      const existingPrefs = profile.jobPreferences || {
+        preferredRoles: [],
+        preferredSkills: [],
+        preferredSkillIds: [],
+        preferredLocations: [],
+        workMode: null,
+        employmentType: null,
+        experienceLevel: null,
+        minSalary: null,
+        currency: "USD",
+        salaryPeriod: "yearly",
+      };
+
+      const rawPrefs = profileData.jobPreferences;
+      const updatedPrefs: any = {
+        preferredRoles: existingPrefs.preferredRoles || [],
+        preferredSkills: existingPrefs.preferredSkills || [],
+        preferredSkillIds: existingPrefs.preferredSkillIds || [],
+        preferredLocations: existingPrefs.preferredLocations || [],
+        workMode: existingPrefs.workMode ?? null,
+        employmentType: existingPrefs.employmentType ?? null,
+        experienceLevel: existingPrefs.experienceLevel ?? null,
+        minSalary: existingPrefs.minSalary ?? null,
+        currency: existingPrefs.currency || "USD",
+        salaryPeriod: existingPrefs.salaryPeriod || "yearly",
+      };
+
+      if (rawPrefs.preferredRoles !== undefined) {
+        updatedPrefs.preferredRoles = Array.from(
+          new Set(rawPrefs.preferredRoles.map((r) => r.trim()).filter(Boolean))
+        );
+      }
+
+      if (rawPrefs.preferredLocations !== undefined) {
+        updatedPrefs.preferredLocations = Array.from(
+          new Set(rawPrefs.preferredLocations.map((l) => l.trim()).filter(Boolean))
+        );
+      }
+
+      if (rawPrefs.preferredSkills !== undefined) {
+        const { skillIds, skills } = await resolveSkills(rawPrefs.preferredSkills);
+        updatedPrefs.preferredSkills = skills;
+        updatedPrefs.preferredSkillIds = skillIds;
+      } else if (rawPrefs.preferredSkillIds !== undefined) {
+        updatedPrefs.preferredSkillIds = rawPrefs.preferredSkillIds.map(
+          (id) => new Types.ObjectId(id)
+        );
+      }
+
+      if (rawPrefs.workMode !== undefined) {
+        updatedPrefs.workMode = rawPrefs.workMode === "" ? null : rawPrefs.workMode;
+      }
+
+      if (rawPrefs.employmentType !== undefined) {
+        updatedPrefs.employmentType = rawPrefs.employmentType === "" ? null : rawPrefs.employmentType;
+      }
+
+      if (rawPrefs.experienceLevel !== undefined) {
+        updatedPrefs.experienceLevel = rawPrefs.experienceLevel === "" ? null : rawPrefs.experienceLevel;
+      }
+
+      if (rawPrefs.minSalary !== undefined) {
+        updatedPrefs.minSalary =
+          rawPrefs.minSalary === null || rawPrefs.minSalary === undefined
+            ? null
+            : Number(rawPrefs.minSalary);
+      }
+
+      if (rawPrefs.currency !== undefined) {
+        updatedPrefs.currency = rawPrefs.currency
+          ? rawPrefs.currency.trim().toUpperCase()
+          : "USD";
+      }
+
+      if (rawPrefs.salaryPeriod !== undefined) {
+        updatedPrefs.salaryPeriod =
+          rawPrefs.salaryPeriod === "" ? null : rawPrefs.salaryPeriod;
+      }
+
+      profile.jobPreferences = updatedPrefs;
+    }
 
     try {
       await profile.save();

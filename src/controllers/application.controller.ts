@@ -29,6 +29,30 @@ export const applyForJob = asyncHandler(
 
 /*
 |--------------------------------------------------------------------------
+| Quick Apply For Job
+|--------------------------------------------------------------------------
+*/
+export const quickApply = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const applicantId = req.user!.userId;
+    const jobId = (req.body?.jobId || req.params?.id) as string;
+    const coverLetter = req.body?.coverLetter;
+
+    const application = await applicationService.quickApply(applicantId, {
+      jobId,
+      coverLetter,
+    });
+
+    res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      message: "Application submitted successfully.",
+      data: application,
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | Get My Applications
 |--------------------------------------------------------------------------
 */
