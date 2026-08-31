@@ -2,6 +2,7 @@ import { Server as HttpServer } from "http";
 import { Server, Socket } from "socket.io";
 import { verifyAccessToken } from "../utils/jwt";
 import { UserRole } from "../constants/roles";
+import { AppError } from "../utils/app-error";
 import Conversation from "../models/conversation.model";
 import * as chatService from "../services/chat.service";
 import * as locationService from "../services/location.service";
@@ -393,8 +394,12 @@ export const initSocketServer = (
           const unreadTotal = await chatService.getUnreadChatCount(userId);
           socket.emit("unread_count_updated", { unreadTotal });
         }
-      } catch (err) {
-        console.error("Error in mark_read socket handler:", err);
+      } catch (err: unknown) {
+        if (err instanceof AppError) {
+          socket.emit("error", { message: err.message, statusCode: err.statusCode });
+        } else {
+          console.error("Error in mark_read socket handler:", err);
+        }
       }
     });
 
