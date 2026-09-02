@@ -110,6 +110,18 @@ export const generateUploadSignature = (
   }
 
   // -------------------------------------------------------------------------
+  // Blog media
+  // Admin only
+  // -------------------------------------------------------------------------
+
+  if (type === "blog" && role !== USER_ROLES.ADMIN) {
+    throw new AppError(
+      "Only administrators can upload blog media.",
+      HTTP_STATUS.FORBIDDEN
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Generate Cloudinary signature
   // -------------------------------------------------------------------------
 

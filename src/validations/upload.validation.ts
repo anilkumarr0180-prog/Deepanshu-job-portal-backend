@@ -2,7 +2,14 @@ import { z } from "zod";
 
 export const uploadSignatureSchema = z.object({
   body: z.object({
-    type: z.enum(["profile", "company-logo", "resume", "post", "chat-media"]),
+    type: z.enum([
+      "profile",
+      "company-logo",
+      "resume",
+      "post",
+      "chat-media",
+      "blog",
+    ]),
   }),
 });
 
