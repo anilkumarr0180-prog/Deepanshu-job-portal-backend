@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "cloudinary:audit-post-media": "ts-node src/scripts/audit-post-media.ts",
-    "cloudinary:migrate-post-media": "ts-node src/scripts/migrate-post-media.ts"
+    "cloudinary:migrate-post-media": "ts-node src/scripts/migrate-post-media.ts",
+    "seed:blog-categories": "ts-node src/scripts/seed-blog-categories.ts"
   },
   "keywords": [],
   "author": "",

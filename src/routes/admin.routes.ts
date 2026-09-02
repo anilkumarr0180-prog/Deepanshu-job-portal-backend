@@ -22,6 +22,16 @@ import {
   syncPolarCatalogController,
 } from "../controllers/admin.controller";
 
+import {
+  getAdminBlogs,
+  createBlog,
+  getAdminBlogById,
+  updateBlog,
+  deleteBlog,
+  publishBlog,
+  unpublishBlog,
+  archiveBlog,
+} from "../controllers/blog.controller";
 
 import { authMiddleware } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
@@ -34,6 +44,12 @@ import {
   jobIdParamSchema,
   verifyCompanySchema,
 } from "../validations/admin.validations";
+import {
+  getAdminBlogsQuerySchema,
+  createBlogSchema,
+  updateBlogSchema,
+  blogIdParamSchema,
+} from "../validations/blog.validations";
 
 const router = Router();
 
@@ -108,6 +124,76 @@ router.delete(
   authorize(USER_ROLES.ADMIN),
   validate(jobIdParamSchema),
   deleteAdminJob
+);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Blog Management
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/blogs",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(getAdminBlogsQuerySchema),
+  getAdminBlogs
+);
+
+router.post(
+  "/blogs",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(createBlogSchema),
+  createBlog
+);
+
+router.get(
+  "/blogs/:id",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(blogIdParamSchema),
+  getAdminBlogById
+);
+
+router.patch(
+  "/blogs/:id",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(updateBlogSchema),
+  updateBlog
+);
+
+router.delete(
+  "/blogs/:id",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(blogIdParamSchema),
+  deleteBlog
+);
+
+router.patch(
+  "/blogs/:id/publish",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(blogIdParamSchema),
+  publishBlog
+);
+
+router.patch(
+  "/blogs/:id/unpublish",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(blogIdParamSchema),
+  unpublishBlog
+);
+
+router.patch(
+  "/blogs/:id/archive",
+  authMiddleware,
+  authorize(USER_ROLES.ADMIN),
+  validate(blogIdParamSchema),
+  archiveBlog
 );
 
 /*
@@ -229,4 +315,3 @@ router.post(
 );
 
 export default router;
-
