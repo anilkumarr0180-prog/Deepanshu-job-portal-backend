@@ -163,3 +163,94 @@ export const archiveBlog = asyncHandler(
     });
   }
 );
+
+/*
+|--------------------------------------------------------------------------
+| Candidate / Author Blog Controllers
+|--------------------------------------------------------------------------
+*/
+
+export const getMyBlogs = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const blogs = await blogService.getCandidateBlogs(userId, req.query);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Candidate blogs fetched successfully.",
+      data: blogs,
+    });
+  }
+);
+
+export const getMyBlogById = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    const blog = await blogService.getCandidateBlogById(id, userId);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Blog fetched successfully.",
+      data: blog,
+    });
+  }
+);
+
+export const createMyBlog = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const blog = await blogService.createCandidateBlog(req.body, userId);
+    res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      message: "Blog created successfully.",
+      data: blog,
+    });
+  }
+);
+
+export const updateMyBlog = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    const blog = await blogService.updateCandidateBlog(id, req.body, userId);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Blog updated successfully.",
+      data: blog,
+    });
+  }
+);
+
+export const deleteMyBlog = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    const result = await blogService.deleteCandidateBlog(id, userId);
+    res.status(HTTP_STATUS.OK).json(result);
+  }
+);
+
+export const publishMyBlog = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    const blog = await blogService.publishCandidateBlog(id, userId);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Blog published successfully.",
+      data: blog,
+    });
+  }
+);
+
+export const unpublishMyBlog = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id as string;
+    const userId = req.user!.userId;
+    const blog = await blogService.unpublishCandidateBlog(id, userId);
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      message: "Blog unpublished successfully.",
+      data: blog,
+    });
+  }
+);
