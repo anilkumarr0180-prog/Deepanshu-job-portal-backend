@@ -386,6 +386,44 @@ export const getConnectionCount = async (userId: string): Promise<number> => {
   });
 };
 
+/*
+|--------------------------------------------------------------------------
+| Get Accepted Connection User IDs
+|--------------------------------------------------------------------------
+|
+| Returns unique string IDs of all peers with whom the user has an
+| accepted connection. Works bidirectionally and never returns the user's
+| own ID.
+|
+|--------------------------------------------------------------------------
+*/
+export const getAcceptedConnectionUserIds = async (userId: string): Promise<string[]> => {
+  if (!Types.ObjectId.isValid(userId)) {
+    return [];
+  }
+
+  const userObjId = new Types.ObjectId(userId);
+  const connections = await Connection.find({
+    status: "accepted",
+    $or: [
+      { requesterId: userObjId },
+      { recipientId: userObjId },
+    ],
+  })
+    .select("requesterId recipientId")
+    .lean();
+
+  const peerIds = connections
+    .map((conn) => {
+      const isRequester = conn.requesterId.toString() === userId;
+      const peer = isRequester ? conn.recipientId : conn.requesterId;
+      return peer ? peer.toString() : null;
+    })
+    .filter((id): id is string => Boolean(id) && id !== userId);
+
+  return Array.from(new Set(peerIds));
+};
+
 export const getPeopleSuggestions = async (userId: string, limitCount: number = 6) => {
   if (!Types.ObjectId.isValid(userId)) {
     throw new AppError("Invalid user ID.", HTTP_STATUS.BAD_REQUEST);

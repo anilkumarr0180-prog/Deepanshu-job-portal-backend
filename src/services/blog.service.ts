@@ -1,11 +1,97 @@
 import { Types } from "mongoose";
 import Blog, { IBlog } from "../models/blog.model";
 import BlogCategory, { IBlogCategory } from "../models/blog-category.model";
+import User from "../models/user.model";
 import cloudinaryService from "./cloudinary.service";
+import { createBulkNotifications } from "./notification.service";
+import { getAcceptedConnectionUserIds } from "./connection.service";
+import { sendBlogPublishedEmail } from "./email.service";
+import { NOTIFICATION_TYPES } from "../constants/notification-type";
 import { AppError } from "../utils/app-error";
 import { HTTP_STATUS } from "../constants/http-status";
 import { BLOG_STATUS, BlogStatus } from "../constants/blog-status";
 import { getPaginationOptions, buildPaginatedResult } from "../utils/pagination";
+
+/*
+|--------------------------------------------------------------------------
+| Blog Publishing Notification Helper
+|--------------------------------------------------------------------------
+|
+| Dispatches real-time Socket.IO notifications, calculates unread count,
+| and triggers best-effort transactional emails strictly to accepted
+| connections of the blog author.
+| Fully error-isolated to protect the primary blog publishing transaction.
+|
+|--------------------------------------------------------------------------
+*/
+export const notifyConnectedUsersOnBlogPublish = async (
+  blog: IBlog | (Record<string, any> & { _id: Types.ObjectId | string; authorId: any; title: string; slug: string; excerpt?: string })
+): Promise<void> => {
+  try {
+    const rawAuthorId = blog.authorId?._id || blog.authorId;
+    if (!rawAuthorId) return;
+    const authorId = rawAuthorId.toString();
+
+    // 1. Lookup accepted connection user IDs (bidirectional, excludes author)
+    const connectedRecipientIds = await getAcceptedConnectionUserIds(authorId);
+    if (!connectedRecipientIds || connectedRecipientIds.length === 0) {
+      return;
+    }
+
+    // 2. Fetch author details for notification text
+    const author = await User.findById(authorId).select("name email").lean();
+    const authorName = author?.name || "A professional in your network";
+
+    // 3. Bulk create notifications and emit Socket.IO events with updated unread counts
+    const notificationPayload = {
+      recipientIds: connectedRecipientIds,
+      senderId: authorId,
+      type: NOTIFICATION_TYPES.BLOG_PUBLISHED,
+      title: "New Blog from Your Connection",
+      body: `${authorName} published a new article: "${blog.title}"`,
+      link: `/blog/${blog.slug}`,
+      metadata: {
+        blogId: blog._id.toString(),
+        slug: blog.slug,
+        authorId,
+      },
+    };
+
+    await createBulkNotifications(notificationPayload);
+
+    // 4. Asynchronous best-effort email dispatch in background
+    setImmediate(async () => {
+      try {
+        const recipients = await User.find({
+          _id: { $in: connectedRecipientIds.map((id) => new Types.ObjectId(id)) },
+          isBlocked: false,
+          isDeleted: false,
+        })
+          .select("name email")
+          .lean();
+
+        for (const recipient of recipients) {
+          if (recipient.email) {
+            await sendBlogPublishedEmail({
+              recipientEmail: recipient.email,
+              recipientName: recipient.name,
+              authorName,
+              blogTitle: blog.title,
+              blogSlug: blog.slug,
+              excerpt: blog.excerpt,
+            }).catch((err) => {
+              console.error(`[Blog Email] Failed to send blog published email to ${recipient.email}:`, err);
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.error("[Blog Email] Error dispatching blog published emails:", emailErr);
+      }
+    });
+  } catch (err) {
+    console.error("Failed to notify connected users on blog publication:", err);
+  }
+};
 
 export interface CreateBlogInput {
   title: string;
@@ -472,6 +558,10 @@ export const createBlog = async (input: CreateBlogInput, authorId: string) => {
     .populate("categoryId", "name slug description")
     .lean();
 
+  if (status === BLOG_STATUS.PUBLISHED) {
+    void notifyConnectedUsersOnBlogPublish(populated || blog);
+  }
+
   return populated || blog;
 };
 
@@ -484,6 +574,8 @@ export const updateBlog = async (id: string, input: UpdateBlogInput) => {
   if (!blog) {
     throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
   }
+
+  const wasAlreadyPublished = blog.status === BLOG_STATUS.PUBLISHED;
 
   if (input.categoryId && input.categoryId !== blog.categoryId.toString()) {
     if (!Types.ObjectId.isValid(input.categoryId)) {
@@ -587,6 +679,10 @@ export const updateBlog = async (id: string, input: UpdateBlogInput) => {
     .populate("categoryId", "name slug description")
     .lean();
 
+  if (!wasAlreadyPublished && blog.status === BLOG_STATUS.PUBLISHED) {
+    void notifyConnectedUsersOnBlogPublish(populated || blog);
+  }
+
   return populated || blog;
 };
 
@@ -624,6 +720,8 @@ export const publishBlog = async (id: string) => {
     throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
   }
 
+  const wasAlreadyPublished = blog.status === BLOG_STATUS.PUBLISHED;
+
   blog.status = BLOG_STATUS.PUBLISHED;
   if (!blog.publishedAt) {
     blog.publishedAt = new Date();
@@ -631,10 +729,16 @@ export const publishBlog = async (id: string) => {
 
   await blog.save();
 
-  return Blog.findById(blog._id)
+  const populated = await Blog.findById(blog._id)
     .populate("authorId", "name email profilePicture role")
     .populate("categoryId", "name slug description")
     .lean();
+
+  if (!wasAlreadyPublished) {
+    void notifyConnectedUsersOnBlogPublish(populated || blog);
+  }
+
+  return populated;
 };
 
 export const unpublishBlog = async (id: string) => {
@@ -846,6 +950,10 @@ export const createCandidateBlog = async (
     .populate("categoryId", "name slug description")
     .lean();
 
+  if (status === BLOG_STATUS.PUBLISHED) {
+    void notifyConnectedUsersOnBlogPublish(populated || blog);
+  }
+
   return populated || blog;
 };
 
@@ -871,6 +979,8 @@ export const updateCandidateBlog = async (
   if (!blog) {
     throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
   }
+
+  const wasAlreadyPublished = blog.status === BLOG_STATUS.PUBLISHED;
 
   if (input.categoryId && input.categoryId !== blog.categoryId.toString()) {
     if (!Types.ObjectId.isValid(input.categoryId)) {
@@ -967,6 +1077,10 @@ export const updateCandidateBlog = async (
     .populate("categoryId", "name slug description")
     .lean();
 
+  if (!wasAlreadyPublished && blog.status === BLOG_STATUS.PUBLISHED) {
+    void notifyConnectedUsersOnBlogPublish(populated || blog);
+  }
+
   return populated || blog;
 };
 
@@ -989,6 +1103,8 @@ export const publishCandidateBlog = async (id: string, userId: string) => {
     throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
   }
 
+  const wasAlreadyPublished = blog.status === BLOG_STATUS.PUBLISHED;
+
   blog.status = BLOG_STATUS.PUBLISHED;
   if (!blog.publishedAt) {
     blog.publishedAt = new Date();
@@ -996,10 +1112,16 @@ export const publishCandidateBlog = async (id: string, userId: string) => {
 
   await blog.save();
 
-  return Blog.findById(blog._id)
+  const populated = await Blog.findById(blog._id)
     .populate("authorId", "name email profilePicture role")
     .populate("categoryId", "name slug description")
     .lean();
+
+  if (!wasAlreadyPublished) {
+    void notifyConnectedUsersOnBlogPublish(populated || blog);
+  }
+
+  return populated;
 };
 
 export const unpublishCandidateBlog = async (id: string, userId: string) => {
