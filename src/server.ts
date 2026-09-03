@@ -1,6 +1,12 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import dns from "dns";
+// Enforce IPv4 DNS resolution across all sockets (Render/Docker cloud environments)
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
 import http from "http";
 import { execSync } from "child_process";
 import app, { allowedOrigins } from "./app";
