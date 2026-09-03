@@ -37,28 +37,36 @@ const getTransporter = async () => {
 
     if (isGmail) {
       cachedTransporter = nodemailer.createTransport({
-        service: "gmail",
+        host: "smtp.gmail.com",
+        port: Number(env.SMTP_PORT) || 587,
+        secure: Number(env.SMTP_PORT) === 465,
         auth: { user, pass },
+        family: 4, // Force IPv4 to prevent ENETUNREACH on Render/Docker environments
         pool: true,
         maxConnections: 5,
         maxMessages: 100,
         rateLimit: 10,
-        connectionTimeout: 5000,
-        greetingTimeout: 5000,
-        socketTimeout: 5000,
-      });
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+        tls: { rejectUnauthorized: false },
+      } as any);
     } else {
-      const port = env.SMTP_PORT || 465;
-      const secure = port === 465 || env.SMTP_SECURE;
+      const port = Number(env.SMTP_PORT) || 587;
+      const secure = port === 465 || Boolean(env.SMTP_SECURE);
       cachedTransporter = nodemailer.createTransport({
         host,
         port,
         secure,
         auth: { user, pass },
+        family: 4, // Force IPv4
         pool: true,
         maxConnections: 5,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
         tls: { rejectUnauthorized: false },
-      });
+      } as any);
     }
 
     return {
@@ -81,7 +89,8 @@ const getTransporter = async () => {
         user: testAccount.user,
         pass: testAccount.pass,
       },
-    }),
+      family: 4,
+    } as any),
     isTestAccount: true,
   };
 };
@@ -215,14 +224,15 @@ export async function sendTransactionalEmail(options: {
         port: 587,
         secure: false,
         auth: { user: testAccount.user, pass: testAccount.pass },
-      });
+        family: 4,
+      } as any);
       const info = await fallbackTransporter.sendMail({
         from: '"JobsBox Security" <no-reply@jobsbox.com>',
         to: options.to,
         subject: options.subject,
         html: options.html,
       });
-      const previewUrl = nodemailer.getTestMessageUrl(info);
+      const previewUrl = nodemailer.getTestMessageUrl(info as any);
       console.log(`[DEV EMAIL PREVIEW LINK - ${label.toUpperCase()} (FALLBACK)]: ${previewUrl}`);
       return true;
     } catch (fallbackErr: any) {
