@@ -1,5 +1,10 @@
+import dns from "dns";
 import nodemailer from "nodemailer";
 import { env } from "../config/env";
+
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 /*
 |--------------------------------------------------------------------------
