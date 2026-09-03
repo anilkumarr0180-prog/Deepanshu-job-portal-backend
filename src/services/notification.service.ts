@@ -16,6 +16,16 @@ export interface CreateNotificationInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface CreateBulkNotificationsInput {
+  recipientIds: (string | Types.ObjectId)[];
+  senderId?: string | Types.ObjectId | null;
+  type: NotificationType;
+  title: string;
+  body: string;
+  link?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface NotificationFilterOptions {
   page?: string;
   limit?: string;
@@ -52,6 +62,104 @@ export const createNotification = async (
   emitNotificationToUser(input.recipientId.toString(), notification.toJSON(), unreadCount);
 
   return notification;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Bulk Create & Send Real-Time Notifications
+|--------------------------------------------------------------------------
+|
+| Optimally batches notification inserts and calculates unread count
+| in a single aggregation pipeline before emitting Socket.IO events.
+| Automatically deduplicates if metadata.blogId and BLOG_PUBLISHED type.
+|
+|--------------------------------------------------------------------------
+*/
+export const createBulkNotifications = async (
+  input: CreateBulkNotificationsInput
+): Promise<INotification[]> => {
+  const { recipientIds, senderId, type, title, body, link, metadata } = input;
+
+  if (!recipientIds || recipientIds.length === 0) {
+    return [];
+  }
+
+  // Deduplicate and filter valid ObjectIds
+  const stringRecipientIds = Array.from(
+    new Set(
+      recipientIds
+        .filter((id) => id && Types.ObjectId.isValid(id.toString()))
+        .map((id) => id.toString())
+    )
+  );
+
+  if (stringRecipientIds.length === 0) {
+    return [];
+  }
+
+  // Prevent duplicate notifications for recipientId + blogId + type
+  let targetRecipientIds = stringRecipientIds;
+  if (metadata?.blogId && type === "BLOG_PUBLISHED") {
+    const existing = await Notification.find({
+      recipientId: { $in: targetRecipientIds.map((id) => new Types.ObjectId(id)) },
+      type,
+      "metadata.blogId": metadata.blogId.toString(),
+    })
+      .select("recipientId")
+      .lean();
+
+    const existingRecipientSet = new Set(existing.map((e) => e.recipientId.toString()));
+    targetRecipientIds = targetRecipientIds.filter((id) => !existingRecipientSet.has(id));
+  }
+
+  if (targetRecipientIds.length === 0) {
+    return [];
+  }
+
+  const docsToInsert = targetRecipientIds.map((recipientId) => ({
+    recipientId: new Types.ObjectId(recipientId),
+    senderId: senderId ? new Types.ObjectId(senderId.toString()) : null,
+    type,
+    title,
+    body,
+    link: link || "",
+    metadata: metadata || {},
+    isRead: false,
+  }));
+
+  // Perform single bulk insert
+  const createdDocs = await Notification.insertMany(docsToInsert);
+
+  // Group unread count in a single aggregation query
+  const targetObjIds = targetRecipientIds.map((id) => new Types.ObjectId(id));
+  const unreadCounts = await Notification.aggregate([
+    {
+      $match: {
+        recipientId: { $in: targetObjIds },
+        isRead: false,
+      },
+    },
+    {
+      $group: {
+        _id: "$recipientId",
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const unreadMap = new Map<string, number>();
+  unreadCounts.forEach((u: { _id: Types.ObjectId; count: number }) => {
+    unreadMap.set(u._id.toString(), u.count);
+  });
+
+  // Emit real-time Socket.IO event to each recipient user room
+  createdDocs.forEach((doc) => {
+    const rId = doc.recipientId.toString();
+    const count = unreadMap.get(rId) || 1;
+    emitNotificationToUser(rId, doc.toJSON(), count);
+  });
+
+  return createdDocs;
 };
 
 /*

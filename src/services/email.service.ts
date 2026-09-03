@@ -1218,3 +1218,81 @@ export const sendPasswordResetSuccessEmail = async (
     logLabel: "Password Reset Confirmation",
   });
 };
+
+/*
+|--------------------------------------------------------------------------
+| Send Blog Published Email (Network Update)
+|--------------------------------------------------------------------------
+*/
+export interface BlogPublishedEmailPayload {
+  recipientEmail: string;
+  recipientName: string;
+  authorName: string;
+  blogTitle: string;
+  blogSlug: string;
+  excerpt?: string;
+}
+
+export const sendBlogPublishedEmail = async (
+  payload: BlogPublishedEmailPayload
+): Promise<boolean> => {
+  const { recipientEmail, recipientName, authorName, blogTitle, blogSlug, excerpt } = payload;
+  const blogUrl = `http://localhost:5173/blog/${blogSlug}`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>New Article from ${authorName}</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+          .header { background: linear-gradient(135deg, #4338ca 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+          .header p { margin: 8px 0 0 0; opacity: 0.9; font-size: 14px; }
+          .content { padding: 32px 24px; }
+          .greeting { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #0f172a; }
+          .article-card { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #4338ca; padding: 20px; border-radius: 10px; margin: 20px 0; }
+          .article-title { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
+          .article-excerpt { font-size: 14px; color: #475569; line-height: 1.5; margin: 0; }
+          .btn { display: block; width: fit-content; margin: 28px auto 0 auto; background: #4338ca; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-weight: 600; font-size: 14px; text-align: center; }
+          .footer { background: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>New Article in Your Network ✍️</h1>
+            <p>${authorName} just published a new article</p>
+          </div>
+          <div class="content">
+            <div class="greeting">Hello ${recipientName || "there"},</div>
+            <p style="line-height: 1.6; color: #334155; font-size: 15px;">
+              Your connection <strong>${authorName}</strong> just published a new article on JobsBox.
+            </p>
+            
+            <div class="article-card">
+              <div class="article-title">${blogTitle}</div>
+              ${excerpt ? `<p class="article-excerpt">${excerpt}</p>` : ""}
+            </div>
+
+            <a href="${blogUrl}" class="btn">Read Article &rarr;</a>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Inc. All rights reserved.</p>
+            <p>You received this email because you are connected with ${authorName} on JobsBox.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  return sendTransactionalEmail({
+    to: recipientEmail,
+    subject: `New Article: "${blogTitle}" by ${authorName}`,
+    html,
+    logLabel: "Blog Published Notification",
+  });
+};

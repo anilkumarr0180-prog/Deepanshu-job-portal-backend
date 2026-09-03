@@ -87,6 +87,7 @@ const notificationSchema = new Schema<INotification>(
 notificationSchema.index({ recipientId: 1, createdAt: -1 });
 notificationSchema.index({ recipientId: 1, isRead: 1 });
 notificationSchema.index({ recipientId: 1, isRead: 1, createdAt: -1 });
+notificationSchema.index({ recipientId: 1, type: 1, "metadata.blogId": 1 }, { sparse: true });
 
 const Notification = model<INotification>("Notification", notificationSchema);
 
