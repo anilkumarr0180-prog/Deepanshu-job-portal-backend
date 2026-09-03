@@ -111,12 +111,17 @@ export const generateUploadSignature = (
 
   // -------------------------------------------------------------------------
   // Blog media
-  // Admin only
+  // Candidate, Recruiter, Admin
   // -------------------------------------------------------------------------
 
-  if (type === "blog" && role !== USER_ROLES.ADMIN) {
+  if (
+    type === "blog" &&
+    role !== USER_ROLES.CANDIDATE &&
+    role !== USER_ROLES.RECRUITER &&
+    role !== USER_ROLES.ADMIN
+  ) {
     throw new AppError(
-      "Only administrators can upload blog media.",
+      "You are not authorized to upload blog media.",
       HTTP_STATUS.FORBIDDEN
     );
   }

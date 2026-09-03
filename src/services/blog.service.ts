@@ -73,6 +73,57 @@ export interface AdminBlogFilters {
   sort?: "newest" | "oldest" | "views" | "title";
 }
 
+export interface CandidateBlogFilters {
+  page?: string | number;
+  limit?: string | number;
+  status?: BlogStatus | "all";
+  category?: string;
+  search?: string;
+  sort?: "newest" | "oldest" | "views" | "title";
+}
+
+export interface CreateCandidateBlogInput {
+  title: string;
+  slug?: string;
+  excerpt: string;
+  content: string;
+  categoryId: string;
+  coverImageUrl?: string;
+  coverImagePublicId?: string;
+  coverImageAlt?: string;
+  tags?: string[];
+  readingTime?: number;
+  status?: BlogStatus;
+  publishedAt?: string;
+  seo?: {
+    metaTitle?: string;
+    metaDescription?: string;
+    keywords?: string[];
+    canonicalUrl?: string;
+  };
+}
+
+export interface UpdateCandidateBlogInput {
+  title?: string;
+  slug?: string;
+  excerpt?: string;
+  content?: string;
+  categoryId?: string;
+  coverImageUrl?: string | null;
+  coverImagePublicId?: string | null;
+  coverImageAlt?: string;
+  tags?: string[];
+  readingTime?: number;
+  status?: BlogStatus;
+  publishedAt?: string | null;
+  seo?: {
+    metaTitle?: string;
+    metaDescription?: string;
+    keywords?: string[];
+    canonicalUrl?: string;
+  };
+}
+
 export function slugify(text: string): string {
   return text
     .toString()
@@ -622,4 +673,394 @@ export const archiveBlog = async (id: string) => {
     .populate("authorId", "name email profilePicture role")
     .populate("categoryId", "name slug description")
     .lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Candidate / Author Blog Services
+|--------------------------------------------------------------------------
+|
+| Enforces strict server-side ownership checks:
+| blog.authorId === authenticatedUserId
+|
+| Unauthorized / unowned requests return HTTP 404 Not Found to prevent
+| information leakage about other users' private drafts or blogs.
+|
+|--------------------------------------------------------------------------
+*/
+
+export const getCandidateBlogs = async (
+  userId: string,
+  filters: CandidateBlogFilters
+) => {
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const { page, limit, skip } = getPaginationOptions({
+    page: filters.page,
+    limit: filters.limit,
+  });
+
+  const query: Record<string, any> = {
+    authorId: new Types.ObjectId(userId),
+    isDeleted: false,
+  };
+
+  if (filters.status && filters.status !== "all") {
+    query.status = filters.status;
+  }
+
+  if (filters.category && filters.category.trim() !== "") {
+    const cat = filters.category.trim();
+    if (Types.ObjectId.isValid(cat)) {
+      query.categoryId = new Types.ObjectId(cat);
+    } else {
+      const foundCategory = await BlogCategory.findOne({
+        slug: cat.toLowerCase(),
+        isDeleted: false,
+      }).select("_id");
+      if (foundCategory) {
+        query.categoryId = foundCategory._id;
+      } else {
+        return buildPaginatedResult([], 0, page, limit);
+      }
+    }
+  }
+
+  if (filters.search && filters.search.trim() !== "") {
+    const searchRegex = new RegExp(escapeRegex(filters.search.trim()), "i");
+    query.$or = [
+      { title: searchRegex },
+      { slug: searchRegex },
+      { excerpt: searchRegex },
+      { tags: searchRegex },
+    ];
+  }
+
+  let sortOptions: Record<string, 1 | -1> = { createdAt: -1 };
+  if (filters.sort === "oldest") sortOptions = { createdAt: 1 };
+  else if (filters.sort === "views") sortOptions = { viewsCount: -1 };
+  else if (filters.sort === "title") sortOptions = { title: 1 };
+
+  const [items, totalItems] = await Promise.all([
+    Blog.find(query)
+      .populate("authorId", "name email profilePicture role")
+      .populate("categoryId", "name slug description")
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    Blog.countDocuments(query),
+  ]);
+
+  return buildPaginatedResult(items, totalItems, page, limit);
+};
+
+export const getCandidateBlogById = async (id: string, userId: string) => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new AppError("Invalid blog ID format.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const blog = await Blog.findOne({
+    _id: id,
+    authorId: new Types.ObjectId(userId),
+    isDeleted: false,
+  })
+    .populate("authorId", "name email profilePicture role")
+    .populate("categoryId", "name slug description")
+    .lean();
+
+  if (!blog) {
+    throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  return blog;
+};
+
+export const createCandidateBlog = async (
+  input: CreateCandidateBlogInput,
+  userId: string
+) => {
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  if (!Types.ObjectId.isValid(input.categoryId)) {
+    throw new AppError("Invalid category ID format.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const categoryExists = await BlogCategory.findOne({
+    _id: input.categoryId,
+    isDeleted: false,
+  });
+
+  if (!categoryExists) {
+    throw new AppError("Selected blog category does not exist.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  const slug = input.slug
+    ? await generateUniqueSlug(input.slug)
+    : await generateUniqueSlug(input.title);
+
+  const readingTime = input.readingTime || calculateReadingTime(input.content);
+  const status =
+    input.status === BLOG_STATUS.PUBLISHED
+      ? BLOG_STATUS.PUBLISHED
+      : BLOG_STATUS.DRAFT;
+
+  const publishedAt =
+    status === BLOG_STATUS.PUBLISHED
+      ? input.publishedAt
+        ? new Date(input.publishedAt)
+        : new Date()
+      : undefined;
+
+  const blog = await Blog.create({
+    title: input.title.trim(),
+    slug,
+    excerpt: input.excerpt.trim(),
+    content: input.content,
+    categoryId: new Types.ObjectId(input.categoryId),
+    authorId: new Types.ObjectId(userId),
+    coverImageUrl: input.coverImageUrl?.trim() || undefined,
+    coverImagePublicId: input.coverImagePublicId?.trim() || undefined,
+    coverImageAlt: input.coverImageAlt?.trim() || undefined,
+    tags: input.tags ? input.tags.map((t) => t.trim().toLowerCase()) : [],
+    readingTime,
+    status,
+    isFeatured: false,
+    isTrending: false,
+    publishedAt,
+    seo: input.seo || {},
+    viewsCount: 0,
+    isDeleted: false,
+  });
+
+  const populated = await Blog.findById(blog._id)
+    .populate("authorId", "name email profilePicture role")
+    .populate("categoryId", "name slug description")
+    .lean();
+
+  return populated || blog;
+};
+
+export const updateCandidateBlog = async (
+  id: string,
+  input: UpdateCandidateBlogInput,
+  userId: string
+) => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new AppError("Invalid blog ID format.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const blog = await Blog.findOne({
+    _id: id,
+    authorId: new Types.ObjectId(userId),
+    isDeleted: false,
+  });
+
+  if (!blog) {
+    throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  if (input.categoryId && input.categoryId !== blog.categoryId.toString()) {
+    if (!Types.ObjectId.isValid(input.categoryId)) {
+      throw new AppError("Invalid category ID format.", HTTP_STATUS.BAD_REQUEST);
+    }
+    const categoryExists = await BlogCategory.findOne({
+      _id: input.categoryId,
+      isDeleted: false,
+    });
+    if (!categoryExists) {
+      throw new AppError("Selected blog category does not exist.", HTTP_STATUS.BAD_REQUEST);
+    }
+    blog.categoryId = new Types.ObjectId(input.categoryId);
+  }
+
+  if (input.title !== undefined) {
+    blog.title = input.title.trim();
+  }
+
+  if (input.slug !== undefined && input.slug.trim() !== "") {
+    blog.slug = await generateUniqueSlug(input.slug, id);
+  }
+
+  if (input.excerpt !== undefined) {
+    blog.excerpt = input.excerpt.trim();
+  }
+
+  if (input.content !== undefined) {
+    blog.content = input.content;
+    if (!input.readingTime) {
+      blog.readingTime = calculateReadingTime(input.content);
+    }
+  }
+
+  if (input.readingTime !== undefined) {
+    blog.readingTime = input.readingTime;
+  }
+
+  if (input.tags !== undefined) {
+    blog.tags = input.tags.map((t) => t.trim().toLowerCase());
+  }
+
+  // Cover image asset change cleanup
+  if (
+    input.coverImagePublicId !== undefined &&
+    blog.coverImagePublicId &&
+    blog.coverImagePublicId !== input.coverImagePublicId
+  ) {
+    const oldPublicId = blog.coverImagePublicId;
+    try {
+      await cloudinaryService.deleteAsset(oldPublicId, "image");
+    } catch (err) {
+      console.error("Failed to delete superseded blog cover image on Cloudinary:", err);
+    }
+  }
+
+  if (input.coverImageUrl !== undefined) {
+    blog.coverImageUrl = input.coverImageUrl ? input.coverImageUrl.trim() : undefined;
+  }
+
+  if (input.coverImagePublicId !== undefined) {
+    blog.coverImagePublicId = input.coverImagePublicId ? input.coverImagePublicId.trim() : undefined;
+  }
+
+  if (input.coverImageAlt !== undefined) {
+    blog.coverImageAlt = input.coverImageAlt ? input.coverImageAlt.trim() : undefined;
+  }
+
+  if (input.status !== undefined) {
+    if (input.status === BLOG_STATUS.PUBLISHED) {
+      blog.status = BLOG_STATUS.PUBLISHED;
+      if (!blog.publishedAt) {
+        blog.publishedAt = input.publishedAt ? new Date(input.publishedAt) : new Date();
+      }
+    } else if (input.status === BLOG_STATUS.DRAFT) {
+      blog.status = BLOG_STATUS.DRAFT;
+      blog.publishedAt = undefined;
+    }
+  }
+
+  if (input.seo !== undefined) {
+    blog.seo = {
+      metaTitle: input.seo.metaTitle?.trim(),
+      metaDescription: input.seo.metaDescription?.trim(),
+      keywords: input.seo.keywords ? input.seo.keywords.map((k) => k.trim()) : [],
+      canonicalUrl: input.seo.canonicalUrl?.trim(),
+    };
+  }
+
+  await blog.save();
+
+  const populated = await Blog.findById(blog._id)
+    .populate("authorId", "name email profilePicture role")
+    .populate("categoryId", "name slug description")
+    .lean();
+
+  return populated || blog;
+};
+
+export const publishCandidateBlog = async (id: string, userId: string) => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new AppError("Invalid blog ID format.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const blog = await Blog.findOne({
+    _id: id,
+    authorId: new Types.ObjectId(userId),
+    isDeleted: false,
+  });
+
+  if (!blog) {
+    throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  blog.status = BLOG_STATUS.PUBLISHED;
+  if (!blog.publishedAt) {
+    blog.publishedAt = new Date();
+  }
+
+  await blog.save();
+
+  return Blog.findById(blog._id)
+    .populate("authorId", "name email profilePicture role")
+    .populate("categoryId", "name slug description")
+    .lean();
+};
+
+export const unpublishCandidateBlog = async (id: string, userId: string) => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new AppError("Invalid blog ID format.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const blog = await Blog.findOne({
+    _id: id,
+    authorId: new Types.ObjectId(userId),
+    isDeleted: false,
+  });
+
+  if (!blog) {
+    throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  blog.status = BLOG_STATUS.DRAFT;
+  blog.publishedAt = undefined;
+
+  await blog.save();
+
+  return Blog.findById(blog._id)
+    .populate("authorId", "name email profilePicture role")
+    .populate("categoryId", "name slug description")
+    .lean();
+};
+
+export const deleteCandidateBlog = async (id: string, userId: string) => {
+  if (!Types.ObjectId.isValid(id)) {
+    throw new AppError("Invalid blog ID format.", HTTP_STATUS.BAD_REQUEST);
+  }
+
+  if (!Types.ObjectId.isValid(userId)) {
+    throw new AppError("Invalid authenticated author ID.", HTTP_STATUS.UNAUTHORIZED);
+  }
+
+  const blog = await Blog.findOne({
+    _id: id,
+    authorId: new Types.ObjectId(userId),
+    isDeleted: false,
+  });
+
+  if (!blog) {
+    throw new AppError("Blog not found.", HTTP_STATUS.NOT_FOUND);
+  }
+
+  blog.isDeleted = true;
+  await blog.save();
+
+  if (blog.coverImagePublicId) {
+    try {
+      await cloudinaryService.deleteAsset(blog.coverImagePublicId, "image");
+    } catch (err) {
+      console.error("Failed to delete blog cover image from Cloudinary:", err);
+    }
+  }
+
+  return { success: true, message: "Blog deleted successfully." };
 };
