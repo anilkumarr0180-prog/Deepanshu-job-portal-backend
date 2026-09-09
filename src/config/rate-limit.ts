@@ -47,3 +47,24 @@ export const generalRateLimiter = rateLimit({
   },
   skip: () => process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development",
 });
+
+/**
+ * Dedicated rate limiter for contact form inquiries.
+ * Prevents automated email flooding, spam, and resource abuse.
+ * 10 requests per 15 minutes per IP.
+ */
+export const contactRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === "production" ? 10 : 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Too many messages sent from this IP. Please try again after 15 minutes.",
+      errors: [],
+    });
+  },
+  skip: () => process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development",
+});
+

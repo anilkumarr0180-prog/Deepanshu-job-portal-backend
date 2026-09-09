@@ -110,6 +110,7 @@ export async function dispatchViaHttpApi(payload: {
   subject: string;
   html: string;
   from?: string;
+  replyTo?: string;
 }): Promise<boolean> {
   // 1. Resend API (HTTPS Port 443)
   if (env.RESEND_API_KEY) {
@@ -128,6 +129,7 @@ export async function dispatchViaHttpApi(payload: {
           to: [payload.to],
           subject: payload.subject,
           html: payload.html,
+          ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
         }),
       });
 
@@ -161,6 +163,7 @@ export async function dispatchViaHttpApi(payload: {
           to: [{ email: payload.to }],
           subject: payload.subject,
           htmlContent: payload.html,
+          ...(payload.replyTo ? { replyTo: { email: payload.replyTo } } : {}),
         }),
       });
 
@@ -189,6 +192,7 @@ export async function sendTransactionalEmail(options: {
   subject: string;
   html: string;
   from?: string;
+  replyTo?: string;
   logLabel?: string;
 }): Promise<boolean> {
   const from = options.from || getFromHeader();
@@ -200,6 +204,7 @@ export async function sendTransactionalEmail(options: {
     subject: options.subject,
     html: options.html,
     from,
+    replyTo: options.replyTo,
   });
   if (sentViaHttp) {
     return true;
@@ -213,6 +218,7 @@ export async function sendTransactionalEmail(options: {
       to: options.to,
       subject: options.subject,
       html: options.html,
+      ...(options.replyTo ? { replyTo: options.replyTo } : {}),
     });
     console.log(`[SMTP] ${label} sent to ${options.to}: ${info.messageId}`);
     if (isTestAccount) {
@@ -236,6 +242,7 @@ export async function sendTransactionalEmail(options: {
         to: options.to,
         subject: options.subject,
         html: options.html,
+        ...(options.replyTo ? { replyTo: options.replyTo } : {}),
       });
       const previewUrl = nodemailer.getTestMessageUrl(info as any);
       console.log(`[DEV EMAIL PREVIEW LINK - ${label.toUpperCase()} (FALLBACK)]: ${previewUrl}`);
@@ -1311,3 +1318,182 @@ export const sendBlogPublishedEmail = async (
     logLabel: "Blog Published Notification",
   });
 };
+
+/*
+|--------------------------------------------------------------------------
+| Contact Form Email Payloads & Dispatchers
+|--------------------------------------------------------------------------
+*/
+export interface ContactNotificationPayload {
+  name: string;
+  email: string;
+  company?: string;
+  phone?: string;
+  message: string;
+  ip?: string;
+  submittedAt?: string;
+}
+
+export interface ContactAutoReplyPayload {
+  name: string;
+  email: string;
+  message: string;
+}
+
+/**
+ * Sends a high-priority notification to the platform administrator/support inbox
+ * with all form details and the submitter's email as the Reply-To header.
+ */
+export const sendContactFormNotification = async (
+  payload: ContactNotificationPayload
+): Promise<boolean> => {
+  const adminEmail =
+    process.env.CONTACT_RECEIVER_EMAIL ||
+    env.SMTP_USER ||
+    env.SMTP_FROM ||
+    "support@jobsbox.com";
+
+  const submittedTime = payload.submittedAt || new Date().toUTCString();
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>New Contact Message from ${payload.name}</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06); }
+          .header { background: linear-gradient(135deg, #05264E 0%, #3C65F5 100%); padding: 32px 24px; text-align: left; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+          .header p { margin: 6px 0 0 0; opacity: 0.85; font-size: 14px; }
+          .content { padding: 28px 24px; }
+          .badge { display: inline-block; background: #EEF2FF; color: #3C65F5; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+          .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+          .meta-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid #f1f5f9; }
+          .meta-table td.label { font-weight: 600; color: #64748b; width: 120px; vertical-align: top; }
+          .meta-table td.value { color: #0f172a; font-weight: 500; }
+          .message-box { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #3C65F5; padding: 18px 20px; border-radius: 8px; font-size: 14px; line-height: 1.65; color: #1e293b; white-space: pre-wrap; word-break: break-word; }
+          .btn-reply { display: inline-block; margin-top: 24px; background: #3C65F5; color: #ffffff !important; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 14px; }
+          .footer { background: #f8fafc; padding: 18px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>New Contact Form Submission 📬</h1>
+            <p>You have received a new inquiry from the JobsBox website.</p>
+          </div>
+          <div class="content">
+            <span class="badge">Inquiry Details</span>
+            <table class="meta-table">
+              <tr>
+                <td class="label">Full Name:</td>
+                <td class="value">${payload.name}</td>
+              </tr>
+              <tr>
+                <td class="label">Email Address:</td>
+                <td class="value"><a href="mailto:${payload.email}" style="color: #3C65F5; text-decoration: none;">${payload.email}</a></td>
+              </tr>
+              ${
+                payload.company
+                  ? `<tr><td class="label">Company:</td><td class="value">${payload.company}</td></tr>`
+                  : ""
+              }
+              ${
+                payload.phone
+                  ? `<tr><td class="label">Phone:</td><td class="value">${payload.phone}</td></tr>`
+                  : ""
+              }
+              <tr>
+                <td class="label">Timestamp:</td>
+                <td class="value">${submittedTime}</td>
+              </tr>
+              ${
+                payload.ip
+                  ? `<tr><td class="label">Client IP:</td><td class="value" style="font-family: monospace; font-size: 12px;">${payload.ip}</td></tr>`
+                  : ""
+              }
+            </table>
+
+            <div style="font-size: 13px; font-weight: 700; color: #475569; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Message:</div>
+            <div class="message-box">${payload.message}</div>
+
+            <a href="mailto:${payload.email}?subject=Re: Contact Inquiry from ${encodeURIComponent(payload.name)}" class="btn-reply">Reply directly to ${payload.name} &rarr;</a>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Portal Admin System. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  return sendTransactionalEmail({
+    to: adminEmail,
+    subject: `[Contact Form] New message from ${payload.name} (${payload.email})`,
+    html,
+    replyTo: payload.email,
+    logLabel: "Contact Form Admin Notification",
+  });
+};
+
+/**
+ * Sends an automated confirmation receipt to the user who submitted the contact form.
+ */
+export const sendContactFormAutoReply = async (
+  payload: ContactAutoReplyPayload
+): Promise<boolean> => {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>We received your message</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06); }
+          .header { background: linear-gradient(135deg, #05264E 0%, #3C65F5 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 700; }
+          .header p { margin: 6px 0 0 0; opacity: 0.85; font-size: 14px; }
+          .content { padding: 28px 24px; }
+          .greeting { font-size: 17px; font-weight: 600; color: #0f172a; margin-bottom: 12px; }
+          .message-card { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #3C65F5; padding: 16px 20px; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #475569; margin: 20px 0; white-space: pre-wrap; word-break: break-word; }
+          .footer { background: #f8fafc; padding: 18px 24px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Message Received 👋</h1>
+            <p>Thank you for reaching out to JobsBox</p>
+          </div>
+          <div class="content">
+            <div class="greeting">Hello ${payload.name},</div>
+            <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">
+              Thank you for contacting JobsBox. We have successfully received your inquiry and our support team is reviewing it. We typically respond within 24 to 48 business hours.
+            </p>
+            <div style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Summary of your message:</div>
+            <div class="message-card">${payload.message}</div>
+            <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 16px 0 0 0;">
+              If you have any urgent queries, you can also explore our help center or reach us directly at <a href="mailto:support@jobsbox.com" style="color: #3C65F5; text-decoration: none; font-weight: 600;">support@jobsbox.com</a>.
+            </p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} JobsBox Inc. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  return sendTransactionalEmail({
+    to: payload.email,
+    subject: "We received your message - JobsBox Support",
+    html,
+    logLabel: "Contact Form Auto Reply",
+  });
+};
+

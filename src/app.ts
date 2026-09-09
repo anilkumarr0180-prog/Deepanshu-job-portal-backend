@@ -25,6 +25,7 @@ import subscriptionRoutes from "./routes/subscription.routes";
 import uploadRoutes from "./routes/upload.routes";
 import interviewRoutes from "./routes/interview.routes";
 import blogRoutes from "./routes/blog.routes";
+import contactRoutes from "./routes/contact.routes";
 
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -141,6 +142,7 @@ app.use("/api/v1/subscriptions", subscriptionRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/interviews", interviewRoutes);
 app.use("/api/blogs", blogRoutes);
+app.use("/api/contact", contactRoutes);
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);
