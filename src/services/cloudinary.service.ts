@@ -86,11 +86,9 @@ class CloudinaryService {
       );
     }
 
-    return cloudinary.url(publicId, {
-      secure: true,
-      type: "authenticated",
-      sign_url: true,
+    return cloudinary.utils.private_download_url(publicId, "", {
       resource_type: "raw",
+      type: "upload",
     });
   }
 

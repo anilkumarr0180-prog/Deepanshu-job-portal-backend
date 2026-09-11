@@ -30,6 +30,8 @@ import contactRoutes from "./routes/contact.routes";
 import { notFoundMiddleware } from "./middleware/not-found.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 
+import aiRoutes from "./routes/ai.routes";
+
 const app = express();
 
 // Trust reverse proxy headers (Render, Vercel, Cloudflare) for accurate rate-limiting and client IP resolution
@@ -143,6 +145,7 @@ app.use("/api/uploads", uploadRoutes);
 app.use("/api/interviews", interviewRoutes);
 app.use("/api/blogs", blogRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/ai", aiRoutes);
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);

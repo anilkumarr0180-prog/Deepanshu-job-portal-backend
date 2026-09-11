@@ -68,3 +68,22 @@ export const contactRateLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development",
 });
 
+/**
+ * Dedicated rate limiter for AI generation endpoints.
+ * Protects free API token quotas from abuse while remaining generous for normal usage.
+ * 30 requests per 15 minutes per IP.
+ */
+export const aiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === "production" ? 30 : 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "AI generation quota temporarily exceeded for your IP. Please try again after a few minutes.",
+      errors: [],
+    });
+  },
+  skip: () => process.env.NODE_ENV === "test",
+});
