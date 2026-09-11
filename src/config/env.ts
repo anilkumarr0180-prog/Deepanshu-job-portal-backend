@@ -1,4 +1,4 @@
-import type { StringValue } from "ms";
+﻿import type { StringValue } from "ms";
 
 /*
 |--------------------------------------------------------------------------
@@ -39,6 +39,10 @@ const {
   RAZORPAY_PLAN_CANDIDATE_PREMIUM_YEARLY,
   RAZORPAY_PLAN_RECRUITER_LITE_YEARLY,
   RAZORPAY_PLAN_RECRUITER_ENTERPRISE_YEARLY,
+
+//gemini api 
+GEMINI_API_KEY,
+
 } = process.env;
 
 // ---------------------------------------------------------------------------
@@ -125,6 +129,8 @@ export const env = {
   // Email APIs (HTTPS Port 443 for Cloud/Render)
   RESEND_API_KEY: (process.env.RESEND_API_KEY || "").trim(),
   BREVO_API_KEY: (process.env.BREVO_API_KEY || "").trim(),
+  // gemini APIs
+GEMINI_API_KEY: (GEMINI_API_KEY || process.env.GEMINI_API_KEY || "").trim(),
 
   // Polar
   POLAR_ACCESS_TOKEN: (process.env.POLAR_ACCESS_TOKEN || "").trim(),
